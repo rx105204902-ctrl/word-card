@@ -1,0 +1,17 @@
+## 1. Implementation
+- [x] 1.1 Add compact-mode state, initial compact launch, and pointer leave/enter handlers (all views) that resize to 150x50 and restore to 350x150.
+- [x] 1.2 Apply the fixed compact size and full size values in both window config and runtime.
+- [x] 1.3 Adjust styles to render a word-only compact view.
+- [x] 1.4 Redesign the full UI layout to fit proportionally within 350x150.
+- [x] 1.5 Add Previous/Next buttons as the only controls.
+- [x] 1.6 Add a small proficiency color box above the word.
+- [x] 1.7 Add phonetic text after the word and an example sentence below.
+- [x] 1.8 Add Chinese translations for the word and example sentence.
+- [x] 1.9 Add a settings button in the top-right corner.
+- [x] 1.10 Remove the logo mark from the window.
+- [x] 1.11 Disable window maximizing to prevent double-click enlargement.
+- [x] 1.12 Disable window resizing.
+- [x] 1.13 Place the window at the bottom-right of the work area on launch.
+- [x] 1.14 Allow the window to be dragged without snapping back.
+- [x] 1.15 Remove the native title bar (decorations: false).
+- [x] 1.16 Align compact/full resize to preserve the bottom-right corner after the user moves the window.
