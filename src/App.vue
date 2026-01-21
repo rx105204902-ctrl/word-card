@@ -7,10 +7,17 @@ import {
   primaryMonitor,
 } from "@tauri-apps/api/window";
 import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
+import { invoke } from "@tauri-apps/api/core";
 
 const isCompact = ref(true);
 const isSettings = ref(false);
 const settingsSection = ref("word-bank");
+const importFileInput = ref(null);
+const importStatus = ref({
+  state: "idle",
+  message: "",
+  summary: null,
+});
 const tooltip = ref({
   visible: false,
   text: "",
@@ -257,6 +264,36 @@ const updateSnapAnchorFromWindow = async () => {
     getWindowRect(),
   ]);
   return updateSnapAnchor(area, rect);
+};
+
+const triggerCsvImport = () => {
+  if (!importFileInput.value) {
+    return;
+  }
+  importFileInput.value.value = "";
+  importFileInput.value.click();
+};
+
+const handleCsvImportChange = async (event) => {
+  const file = event?.target?.files?.[0];
+  if (!file) {
+    return;
+  }
+  importStatus.value = { state: "reading", message: "", summary: null };
+  try {
+    const csvContent = await file.text();
+    importStatus.value = { state: "importing", message: "", summary: null };
+    const summary = await invoke("import_four_rank_csv", {
+      csv_content: csvContent,
+    });
+    importStatus.value = { state: "done", message: "", summary };
+  } catch (error) {
+    importStatus.value = {
+      state: "error",
+      message: error instanceof Error ? error.message : String(error),
+      summary: null,
+    };
+  }
 };
 
 const resolvePositionForAnchor = (anchor, area, size) => {
@@ -715,9 +752,39 @@ onBeforeUnmount(() => {
             <p v-else-if="settingsSection === 'study-calendar'" class="settings-placeholder">
               Study Calendar settings will appear here.
             </p>
-            <p v-else class="settings-placeholder">
-              More settings will appear here.
-            </p>
+            <div v-else class="settings-more">
+              <input
+                ref="importFileInput"
+                class="settings-file-input"
+                type="file"
+                accept=".csv,text/csv"
+                @change="handleCsvImportChange"
+              />
+              <button
+                class="nav-button settings-import-button"
+                type="button"
+                :disabled="importStatus.state === 'reading' || importStatus.state === 'importing'"
+                @click="triggerCsvImport"
+              >
+                Import CSV
+              </button>
+              <p v-if="importStatus.state === 'idle'" class="settings-placeholder">
+                Import a CSV in the four-rank format to seed the local word bank.
+              </p>
+              <p v-else-if="importStatus.state === 'reading'" class="settings-placeholder">
+                Reading file…
+              </p>
+              <p v-else-if="importStatus.state === 'importing'" class="settings-placeholder">
+                Importing into SQLite…
+              </p>
+              <p v-else-if="importStatus.state === 'done'" class="settings-placeholder">
+                Imported {{ importStatus.summary?.upserted ?? 0 }} / {{ importStatus.summary?.total ?? 0 }}
+                (skipped {{ importStatus.summary?.skipped ?? 0 }})
+              </p>
+              <p v-else class="settings-placeholder settings-error">
+                {{ importStatus.message }}
+              </p>
+            </div>
           </div>
         </div>
         <div
@@ -1097,6 +1164,32 @@ onBeforeUnmount(() => {
   font-size: 0.58rem;
   color: var(--muted);
   line-height: 1.4;
+}
+
+.settings-more {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.settings-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.settings-import-button {
+  justify-self: start;
+}
+
+.settings-error {
+  color: #9b1c1c;
 }
 
 .ui-tooltip {
