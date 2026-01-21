@@ -725,6 +725,25 @@ onBeforeUnmount(() => {
             </button>
             <button
               class="settings-nav-item icon-button"
+              :class="{ 'is-active': settingsSection === 'import' }"
+              type="button"
+              @click="setSettingsSection('import'); triggerCsvImport()"
+              @mousedown.stop
+              @mouseenter="showTooltip"
+              @mouseleave="hideTooltip"
+              aria-label="Import"
+              data-tooltip="Import"
+              data-tooltip-position="right"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+                <path d="M12 3v12" />
+                <path d="M7 10l5 5 5-5" />
+                <path d="M4 20h16" />
+              </svg>
+            </button>
+
+            <button
+              class="settings-nav-item icon-button"
               :class="{ 'is-active': settingsSection === 'more' }"
               type="button"
               @click="setSettingsSection('more')"
@@ -743,48 +762,14 @@ onBeforeUnmount(() => {
             </button>
           </nav>
           <div class="settings-content">
-            <p v-if="settingsSection === 'word-bank'" class="settings-placeholder">
-              Word Bank settings will appear here.
-            </p>
-            <p v-else-if="settingsSection === 'fuzzy-words'" class="settings-placeholder">
-              Fuzzy Words settings will appear here.
-            </p>
-            <p v-else-if="settingsSection === 'study-calendar'" class="settings-placeholder">
-              Study Calendar settings will appear here.
-            </p>
-            <div v-else class="settings-more">
-              <input
-                ref="importFileInput"
-                class="settings-file-input"
-                type="file"
-                accept=".csv,text/csv"
-                @change="handleCsvImportChange"
-              />
-              <button
-                class="nav-button settings-import-button"
-                type="button"
-                :disabled="importStatus.state === 'reading' || importStatus.state === 'importing'"
-                @click="triggerCsvImport"
-              >
-                Import CSV
-              </button>
-              <p v-if="importStatus.state === 'idle'" class="settings-placeholder">
-                Import a CSV in the four-rank format to seed the local word bank.
-              </p>
-              <p v-else-if="importStatus.state === 'reading'" class="settings-placeholder">
-                Reading file…
-              </p>
-              <p v-else-if="importStatus.state === 'importing'" class="settings-placeholder">
-                Importing into SQLite…
-              </p>
-              <p v-else-if="importStatus.state === 'done'" class="settings-placeholder">
-                Imported {{ importStatus.summary?.upserted ?? 0 }} / {{ importStatus.summary?.total ?? 0 }}
-                (skipped {{ importStatus.summary?.skipped ?? 0 }})
-              </p>
-              <p v-else class="settings-placeholder settings-error">
-                {{ importStatus.message }}
-              </p>
-            </div>
+            <input
+              ref="importFileInput"
+              class="settings-file-input"
+              type="file"
+              accept=".csv,text/csv"
+              @change="handleCsvImportChange"
+            />
+            <div class="settings-more"></div>
           </div>
         </div>
         <div
@@ -1143,8 +1128,6 @@ onBeforeUnmount(() => {
 
 .settings-content {
   border-radius: 10px;
-  border: 1px solid var(--stroke);
-  background: rgba(255, 255, 255, 0.6);
   padding: 8px;
   height: 100%;
   min-height: 0;
