@@ -20,6 +20,10 @@ async fn import_four_rank_csv(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            tauri::async_runtime::block_on(word_bank::init_database(&app.handle()))
+                .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
+        })
         .invoke_handler(tauri::generate_handler![greet, import_four_rank_csv])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

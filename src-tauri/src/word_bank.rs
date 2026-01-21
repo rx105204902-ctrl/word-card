@@ -63,31 +63,74 @@ async fn open_pool(app: &tauri::AppHandle) -> Result<SqlitePool> {
         .filename(&db_path)
         .create_if_missing(true);
 
-    SqlitePoolOptions::new()
+    let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
         .await
-        .with_context(|| format!("打开 SQLite 数据库失败: {}", db_path.display()))
+        .with_context(|| format!("Failed to open SQLite database {}", db_path.display()))?;
+
+    sqlx::query("PRAGMA foreign_keys = ON;")
+        .execute(&pool)
+        .await
+        .context("Failed to enable SQLite foreign keys")?;
+
+    Ok(pool)
 }
 
 async fn ensure_schema(pool: &SqlitePool) -> Result<()> {
     sqlx::query(
         r#"
-CREATE TABLE IF NOT EXISTS word_entries (
-  word TEXT PRIMARY KEY,
-  phonetic TEXT,
-  part_of_speech_and_meanings TEXT,
-  example_sentence TEXT,
-  example_translation TEXT,
-  audio_uk TEXT,
-  audio_us TEXT
+CREATE TABLE IF NOT EXISTS word_list (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )
 "#,
     )
     .execute(pool)
     .await
-    .context("初始化 word_entries 表失败")?;
+    .context("Failed to initialize word_list table")?;
 
+    sqlx::query(
+        r#"
+CREATE TABLE IF NOT EXISTS word (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  word TEXT NOT NULL UNIQUE,
+  phonetic TEXT,
+  part_of_speech_and_meanings TEXT,
+  example_sentence TEXT,
+  example_translation TEXT,
+  audio_uk TEXT,
+  audio_us TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+"#,
+    )
+    .execute(pool)
+    .await
+    .context("Failed to initialize word table")?;
+
+    sqlx::query(
+        r#"
+CREATE TABLE IF NOT EXISTS word_list_map (
+  word_list_id INTEGER NOT NULL,
+  word_id INTEGER NOT NULL,
+  PRIMARY KEY (word_list_id, word_id),
+  FOREIGN KEY (word_list_id) REFERENCES word_list(id),
+  FOREIGN KEY (word_id) REFERENCES word(id)
+)
+"#,
+    )
+    .execute(pool)
+    .await
+    .context("Failed to initialize word_list_map table")?;
+
+    Ok(())
+}
+
+pub async fn init_database(app: &tauri::AppHandle) -> Result<()> {
+    let pool = open_pool(app).await?;
+    ensure_schema(&pool).await?;
     Ok(())
 }
 
@@ -126,7 +169,7 @@ pub async fn import_four_rank_csv(app: &tauri::AppHandle, csv_content: &str) -> 
 
         sqlx::query(
             r#"
-INSERT INTO word_entries (
+INSERT INTO word (
   word,
   phonetic,
   part_of_speech_and_meanings,
@@ -154,7 +197,7 @@ ON CONFLICT(word) DO UPDATE SET
         .bind(record.audio_us)
         .execute(&mut *tx)
         .await
-        .context("写入 word_entries 失败")?;
+        .context("Failed to write word table")?;
         upserted += 1;
     }
 
