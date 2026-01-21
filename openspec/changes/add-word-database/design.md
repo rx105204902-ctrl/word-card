@@ -9,13 +9,13 @@ The app stores word data locally and already plans SQLite usage. A stable schema
 - Use SQLite3 tables `word_list`, `word`, and `word_list_map`, with `created_at` timestamps on `word_list` and `word`.
 - Enforce unique words via a unique constraint on `word`.
 - Enforce unique list membership via a composite uniqueness constraint on (`word_list_id`, `word_id`).
+- Enable SQLite foreign key enforcement when creating connections (for `word_list_map` integrity).
 
 ## Risks / Trade-offs
 - Future schema changes will require migrations and backfills.
 
 ## Migration Plan
 - Add a migration to create the tables and constraints.
-- Seed default word lists for `CET-4` and `CET-6` if required by product behavior.
 
 ## Open Questions
 - None.
