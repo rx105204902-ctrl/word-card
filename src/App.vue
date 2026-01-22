@@ -1845,7 +1845,7 @@ onBeforeUnmount(() => {
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 4px;
   padding: 0;
-  margin-top: -3px;
+  margin-top: -5px;
   border-radius: 0;
   border: none;
   background: transparent;
