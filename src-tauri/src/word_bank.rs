@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -199,6 +200,73 @@ CREATE TABLE IF NOT EXISTS user_word_learning (
     .execute(pool)
     .await
     .context("Failed to initialize user_word_learning indexes")?;
+
+    ensure_learning_columns(pool).await?;
+
+    Ok(())
+}
+
+async fn ensure_learning_columns(pool: &SqlitePool) -> Result<()> {
+    let rows = sqlx::query("PRAGMA table_info(user_word_learning)")
+        .fetch_all(pool)
+        .await
+        .context("Failed to read user_word_learning schema")?;
+
+    let mut columns = HashSet::new();
+    for row in rows {
+        let name: String = row
+            .try_get("name")
+            .context("Failed to read user_word_learning column name")?;
+        columns.insert(name);
+    }
+
+    let has_last_studied = columns.contains("last_studied_at");
+    let has_study_count = columns.contains("study_count");
+
+    if !columns.contains("last_learned_at") {
+        sqlx::query("ALTER TABLE user_word_learning ADD COLUMN last_learned_at TEXT")
+            .execute(pool)
+            .await
+            .context("Failed to add last_learned_at column")?;
+    }
+
+    if !columns.contains("learn_count") {
+        sqlx::query(
+            "ALTER TABLE user_word_learning ADD COLUMN learn_count INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(pool)
+        .await
+        .context("Failed to add learn_count column")?;
+    }
+
+    if has_last_studied {
+        sqlx::query(
+            r#"
+UPDATE user_word_learning
+SET last_learned_at = COALESCE(last_learned_at, last_studied_at)
+WHERE last_studied_at IS NOT NULL
+"#,
+        )
+        .execute(pool)
+        .await
+        .context("Failed to migrate last_studied_at")?;
+    }
+
+    if has_study_count {
+        sqlx::query(
+            r#"
+UPDATE user_word_learning
+SET learn_count = CASE
+  WHEN learn_count IS NULL OR learn_count = 0 THEN study_count
+  ELSE learn_count
+END
+WHERE study_count IS NOT NULL
+"#,
+        )
+        .execute(pool)
+        .await
+        .context("Failed to migrate study_count")?;
+    }
 
     Ok(())
 }
