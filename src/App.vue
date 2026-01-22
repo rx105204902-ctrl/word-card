@@ -364,7 +364,7 @@ const openUploadPicker = () => {
 
 const continueUpload = () => {
   if (uploads.value.length >= MAX_UPLOAD_COUNT) {
-    importNotice.value = "鏈€澶氭敮鎸佷笂浼?3 涓枃浠?;
+    importNotice.value = "最多支持上传 3 个文件";
     return;
   }
   openUploadPicker();
@@ -646,15 +646,15 @@ const createUploadItem = (file, uploadId) => ({
 const resolveUploadStatus = (item) => {
   switch (item.status) {
     case "uploading":
-      return "涓婁紶涓?;
+      return "上传中";
     case "completed":
-      return "宸插畬鎴?;
+      return "已完成";
     case "canceled":
-      return "宸插彇娑?;
+      return "已取消";
     case "error":
-      return "澶辫触";
+      return "失败";
     case "queued":
-      return "鎺掗槦涓?;
+      return "排队中";
     default:
       return "";
   }
@@ -667,12 +667,12 @@ const processSelectedFiles = (files) => {
   }
   const available = MAX_UPLOAD_COUNT - uploads.value.length;
   if (available <= 0) {
-    importNotice.value = "鏈€澶氭敮鎸佷笂浼?3 涓枃浠?;
+    importNotice.value = "最多支持上传 3 个文件";
     return;
   }
   const selected = list.slice(0, available);
   if (selected.length < list.length) {
-    importNotice.value = "鏈€澶氭敮鎸佷笂浼?3 涓枃浠?;
+    importNotice.value = "最多支持上传 3 个文件";
   }
   selected.forEach((file) => {
     void startUploadForFile(file);
@@ -1173,18 +1173,18 @@ const confirmImport = async () => {
     if (wordListMode.value === "new") {
       const name = newWordListName.value.trim();
       if (!name) {
-        wordListNotice.value = "璇疯緭鍏ヨ瘝搴撳悕绉?;
+        wordListNotice.value = "请输入词库名称";
         return;
       }
       if (wordListCards.value.some((item) => item.name === name)) {
-        wordListNotice.value = "璇嶅簱鍚嶇О宸插瓨鍦?;
+        wordListNotice.value = "词库名称已存在";
         return;
       }
       wordListId = await invoke("create_word_list", { name });
     }
 
     if (!wordListId) {
-      wordListNotice.value = "璇烽€夋嫨璇嶅簱";
+      wordListNotice.value = "请选择词库";
       return;
     }
 
@@ -1438,8 +1438,8 @@ onBeforeUnmount(() => {
               @mousedown.stop
               @mouseenter="showTooltip"
               @mouseleave="hideTooltip"
-              aria-label="妯＄硦璇?
-              data-tooltip="妯＄硦璇?
+              aria-label="&#x6A21;&#x7CCA;&#x8BCD;"
+              data-tooltip="&#x6A21;&#x7CCA;&#x8BCD;"
               data-tooltip-position="right"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
@@ -1525,7 +1525,7 @@ onBeforeUnmount(() => {
                 v-else-if="!sortedWordListCards.length && !wordBankLoading"
                 class="word-bank-empty"
               >
-                鏆傛棤璇嶅簱
+                暂无词库
               </p>
               <div v-if="sortedWordListCards.length" class="word-list-grid">
                 <div
@@ -1536,7 +1536,7 @@ onBeforeUnmount(() => {
                 >
                   <div class="word-list-meta">
                     <div class="word-list-title">{{ list.name }}</div>
-                    <div class="word-list-count">{{ list.word_count }} 涓崟璇?/div>
+                    <div class="word-list-count">{{ list.word_count }} 个单词</div>
                   </div>
                   <div class="word-list-actions">
                     <button
@@ -1548,7 +1548,7 @@ onBeforeUnmount(() => {
                           : setActiveWordList(list.id)
                       "
                     >
-                      {{ list.is_active ? "鍙栨秷浣跨敤" : "浣跨敤" }}
+                      {{ list.is_active ? "取消使用" : "使用" }}
                     </button>
                     <button
                       v-if="!list.is_active"
