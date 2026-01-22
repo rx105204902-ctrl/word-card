@@ -1376,16 +1376,18 @@ onBeforeUnmount(() => {
             <span v-if="displayPhonetic" class="phonetic">{{ displayPhonetic }}</span>
           </div>
 
-          <p v-if="displayMeaning" class="word-cn">{{ displayMeaning }}</p>
+          <div class="detail-group">
+            <p v-if="displayMeaning" class="word-cn">{{ displayMeaning }}</p>
 
-          <div v-if="displayExample || displayExampleTranslation" class="example-group">
-            <p v-if="displayExample" class="example">{{ displayExample }}</p>
-            <p v-if="displayExampleTranslation" class="example-cn">
-              {{ displayExampleTranslation }}
-            </p>
+            <div v-if="displayExample || displayExampleTranslation" class="example-group">
+              <p v-if="displayExample" class="example">{{ displayExample }}</p>
+              <p v-if="displayExampleTranslation" class="example-cn">
+                {{ displayExampleTranslation }}
+              </p>
+            </div>
+
+            <p v-if="learningNotice" class="learning-notice">{{ learningNotice }}</p>
           </div>
-
-          <p v-if="learningNotice" class="learning-notice">{{ learningNotice }}</p>
 
           <div class="nav-actions">
             <button
@@ -1840,7 +1842,7 @@ onBeforeUnmount(() => {
 .card {
   height: 100%;
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 4px;
   padding: 0;
   border-radius: 0;
@@ -1959,12 +1961,24 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 0.65rem;
   color: #2a2723;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .learning-notice {
   margin: 0;
   font-size: 0.52rem;
   color: #9b1c1c;
+}
+
+.detail-group {
+  display: grid;
+  gap: 2px;
+  min-height: 0;
+  overflow: hidden;
+  align-content: start;
 }
 
 .empty-state {
