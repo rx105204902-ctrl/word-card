@@ -1667,7 +1667,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div v-else-if="settingsSection === 'more'" class="settings-more"></div>
-            <p v-else class="settings-placeholder">璇ユā鍧楁鍦ㄥ畬鍠勪腑銆?/p>
+            <p v-else class="settings-placeholder">该模块正在完善中。</p>
           </div>
         </div>
         <div
