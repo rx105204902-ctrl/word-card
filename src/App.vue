@@ -686,10 +686,10 @@ const handleUploadFilesChange = async (event) => {
 
 const validateUploadFile = (file) => {
   if (!file.name.toLowerCase().endsWith(".csv")) {
-    return "浠呮敮鎸?CSV 鏂囦欢";
+    return "仅支持CSV 文件";
   }
   if (file.size > MAX_UPLOAD_SIZE) {
-    return "鏂囦欢澶у皬瓒呰繃 100MB";
+    return "文件大小超过 100MB";
   }
   return "";
 };
@@ -754,7 +754,7 @@ const runUpload = async (item, file) => {
 const startUploadForFile = async (file, existingItem) => {
   const duplicate = isDuplicateName(file.name, existingItem?.id);
   if (duplicate) {
-    const message = "鏂囦欢鍚嶇О閲嶅";
+    const message = "文件名称重复";
     importNotice.value = message;
     if (existingItem) {
       existingItem.status = "error";
@@ -1193,7 +1193,7 @@ const confirmImport = async () => {
       wordListId,
     });
     uploads.value = [];
-    importNotice.value = "瀵煎叆瀹屾垚";
+    importNotice.value = "导入完成";
     importDialogVisible.value = false;
     await refreshWordBank();
   } catch (error) {
@@ -1473,8 +1473,8 @@ onBeforeUnmount(() => {
               @mousedown.stop
               @mouseenter="showTooltip"
               @mouseleave="hideTooltip"
-              aria-label="瀵煎叆"
-              data-tooltip="瀵煎叆"
+              aria-label="导入"
+              data-tooltip="导入"
               data-tooltip-position="right"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
@@ -1517,8 +1517,8 @@ onBeforeUnmount(() => {
               class="word-bank-panel"
             >
               <div class="word-bank-header">
-                <span class="word-bank-title">璇嶅簱瀵艰埅</span>
-                <span v-if="wordBankLoading" class="word-bank-status">鍔犺浇涓?..</span>
+                <span class="word-bank-title">词库导航</span>
+                <span v-if="wordBankLoading" class="word-bank-status">加载中...</span>
               </div>
               <p v-if="wordBankNotice" class="word-bank-notice">{{ wordBankNotice }}</p>
               <p
@@ -1556,7 +1556,7 @@ onBeforeUnmount(() => {
                       type="button"
                       @click="deleteWordList(list.id)"
                     >
-                      鍒犻櫎
+                      删除
                     </button>
                   </div>
                 </div>
@@ -1572,9 +1572,9 @@ onBeforeUnmount(() => {
                   type="button"
                   @click="openUploadPicker"
                 >
-                  涓婁紶鏂囦欢
+                  上传文件
                 </button>
-                <p class="import-hint">浠呮敮鎸?0鈥?00MB 鐨?CSV 鏂囦欢</p>
+                <p class="import-hint">仅支持 0-100MB 的 CSV 文件</p>
                 <p v-if="importNotice" class="import-notice">{{ importNotice }}</p>
               </div>
               <div v-if="uploads.length" class="upload-list">
@@ -1603,9 +1603,9 @@ onBeforeUnmount(() => {
                         @click="cancelUpload(item.id)"
                         @mouseenter="showTooltip"
                         @mouseleave="hideTooltip"
-                        data-tooltip="鍙栨秷"
+                        data-tooltip="取消"
                       >
-                        鍙栨秷
+                        取消
                       </button>
                       <template v-else-if="item.status === 'canceled'">
                         <button
@@ -1621,26 +1621,26 @@ onBeforeUnmount(() => {
                         <button
                           class="upload-action upload-delete"
                           type="button"
-                          aria-label="鍒犻櫎"
+                          aria-label="删除"
                           @click="removeUpload(item.id)"
                           @mouseenter="showTooltip"
                           @mouseleave="hideTooltip"
-                          data-tooltip="鍒犻櫎"
+                          data-tooltip="删除"
                         >
-                          脳
+                          ×
                         </button>
                       </template>
                       <button
                         v-else
                         class="upload-action upload-delete"
                         type="button"
-                        aria-label="鍒犻櫎"
+                        aria-label="删除"
                         @click="removeUpload(item.id)"
                         @mouseenter="showTooltip"
                         @mouseleave="hideTooltip"
-                        data-tooltip="鍒犻櫎"
+                        data-tooltip="删除"
                       >
-                        脳
+                        ×
                       </button>
                     </div>
                   </div>
@@ -1653,7 +1653,7 @@ onBeforeUnmount(() => {
                   type="button"
                   @click="continueUpload"
                 >
-                  缁х画涓婁紶
+                  继续上传
                 </button>
                 <button
                   v-if="showContinueUpload"
@@ -1662,7 +1662,7 @@ onBeforeUnmount(() => {
                   :disabled="!canImport"
                   @click="openImportDialog"
                 >
-                  {{ importBusy ? "瀵煎叆涓?.." : "瀵煎叆" }}
+                  {{ importBusy ? "导入中..." : "导入" }}
                 </button>
               </div>
             </div>
@@ -1701,7 +1701,7 @@ onBeforeUnmount(() => {
                       {{ list.name }}
                     </option>
                   </select>
-                  <p v-if="!hasWordLists" class="import-dialog-hint">鏆傛棤鍙€夎瘝搴?/p>
+                  <p v-if="!hasWordLists" class="import-dialog-hint">暂无可选词库</p>
                 </div>
               </div>
               <div class="import-dialog-option">
@@ -1720,7 +1720,7 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <p v-if="wordListLoading" class="import-dialog-hint">
-                姝ｅ湪鍔犺浇璇嶅簱...
+                正在加载词库...
               </p>
               <p v-else-if="wordListNotice" class="import-dialog-notice">
                 {{ wordListNotice }}
@@ -1728,7 +1728,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="import-dialog-actions">
               <button class="dialog-button" type="button" @click="closeImportDialog">
-                鍙栨秷
+                取消
               </button>
               <button
                 class="dialog-button primary"
@@ -1736,7 +1736,7 @@ onBeforeUnmount(() => {
                 :disabled="!canConfirmImportDialog || importBusy"
                 @click="confirmImport"
               >
-                {{ importBusy ? "瀵煎叆涓?.." : "纭瀵煎叆" }}
+                {{ importBusy ? "导入中..." : "确认导入" }}
               </button>
             </div>
           </div>
@@ -2638,3 +2638,6 @@ body {
   justify-content: stretch;
 }
 </style>
+
+
+
