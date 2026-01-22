@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   cursorPosition,
@@ -25,6 +25,13 @@ const selectedWordListId = ref(null);
 const newWordListName = ref("");
 const wordListNotice = ref("");
 const wordListLoading = ref(false);
+const learningNotice = ref("");
+const learningBusy = ref(false);
+const currentWord = ref(null);
+const remainingWords = ref([]);
+const historyStack = ref([]);
+const prefetchWords = ref([]);
+const prefetchInFlight = ref(false);
 const showUploadHero = computed(() => uploads.value.length === 0);
 const showContinueUpload = computed(() => uploads.value.length > 0);
 const hasCompletedUploads = computed(() =>
@@ -35,6 +42,53 @@ const sortedWordListCards = computed(() => {
   const list = [...wordListCards.value];
   list.sort((a, b) => Number(b.is_active) - Number(a.is_active));
   return list;
+});
+const hasCurrentWord = computed(() => Boolean(currentWord.value));
+const proficiencyLevel = computed(() => {
+  const score = currentWord.value?.proficiency_score ?? 0;
+  if (score <= 1) {
+    return 1;
+  }
+  if (score <= 3) {
+    return 2;
+  }
+  if (score <= 5) {
+    return 3;
+  }
+  if (score <= 7) {
+    return 4;
+  }
+  return 5;
+});
+const proficiencyLabel = computed(
+  () => `熟练度等级 ${proficiencyLevel.value}`
+);
+const displayWord = computed(() => currentWord.value?.word ?? "...");
+const displayPhonetic = computed(() => currentWord.value?.phonetic ?? "");
+const displayMeaning = computed(
+  () => currentWord.value?.part_of_speech_and_meanings ?? ""
+);
+const displayExample = computed(
+  () => currentWord.value?.example_sentence ?? ""
+);
+const displayExampleTranslation = computed(
+  () => currentWord.value?.example_translation ?? ""
+);
+const canGoPrevious = computed(
+  () => historyStack.value.length > 0 && !learningBusy.value
+);
+const canGoNext = computed(() => !learningBusy.value);
+const canMarkFuzzy = computed(
+  () => hasCurrentWord.value && !learningBusy.value
+);
+const nextLabel = computed(() => {
+  if (learningBusy.value) {
+    return "加载中";
+  }
+  if (!hasCurrentWord.value) {
+    return "开始";
+  }
+  return "下一个";
 });
 const tooltip = ref({
   visible: false,
@@ -310,7 +364,7 @@ const openUploadPicker = () => {
 
 const continueUpload = () => {
   if (uploads.value.length >= MAX_UPLOAD_COUNT) {
-    importNotice.value = "最多支持上传 3 个文件";
+    importNotice.value = "鏈€澶氭敮鎸佷笂浼?3 涓枃浠?;
     return;
   }
   openUploadPicker();
@@ -592,15 +646,15 @@ const createUploadItem = (file, uploadId) => ({
 const resolveUploadStatus = (item) => {
   switch (item.status) {
     case "uploading":
-      return "上传中";
+      return "涓婁紶涓?;
     case "completed":
-      return "已完成";
+      return "宸插畬鎴?;
     case "canceled":
-      return "已取消";
+      return "宸插彇娑?;
     case "error":
-      return "失败";
+      return "澶辫触";
     case "queued":
-      return "排队中";
+      return "鎺掗槦涓?;
     default:
       return "";
   }
@@ -613,12 +667,12 @@ const processSelectedFiles = (files) => {
   }
   const available = MAX_UPLOAD_COUNT - uploads.value.length;
   if (available <= 0) {
-    importNotice.value = "最多支持上传 3 个文件";
+    importNotice.value = "鏈€澶氭敮鎸佷笂浼?3 涓枃浠?;
     return;
   }
   const selected = list.slice(0, available);
   if (selected.length < list.length) {
-    importNotice.value = "最多支持上传 3 个文件";
+    importNotice.value = "鏈€澶氭敮鎸佷笂浼?3 涓枃浠?;
   }
   selected.forEach((file) => {
     void startUploadForFile(file);
@@ -632,10 +686,10 @@ const handleUploadFilesChange = async (event) => {
 
 const validateUploadFile = (file) => {
   if (!file.name.toLowerCase().endsWith(".csv")) {
-    return "仅支持 CSV 文件";
+    return "浠呮敮鎸?CSV 鏂囦欢";
   }
   if (file.size > MAX_UPLOAD_SIZE) {
-    return "文件大小超过 100MB";
+    return "鏂囦欢澶у皬瓒呰繃 100MB";
   }
   return "";
 };
@@ -700,7 +754,7 @@ const runUpload = async (item, file) => {
 const startUploadForFile = async (file, existingItem) => {
   const duplicate = isDuplicateName(file.name, existingItem?.id);
   if (duplicate) {
-    const message = "文件名称重复";
+    const message = "鏂囦欢鍚嶇О閲嶅";
     importNotice.value = message;
     if (existingItem) {
       existingItem.status = "error";
@@ -896,6 +950,7 @@ const setActiveWordList = async (listId) => {
   try {
     await invoke("set_active_word_list", { wordListId: listId });
     await refreshWordBank();
+    void startLearningSession(true);
   } catch (error) {
     wordBankNotice.value = error instanceof Error ? error.message : String(error);
   }
@@ -906,6 +961,7 @@ const clearActiveWordList = async () => {
   try {
     await invoke("clear_active_word_list");
     await refreshWordBank();
+    void startLearningSession(true);
   } catch (error) {
     wordBankNotice.value = error instanceof Error ? error.message : String(error);
   }
@@ -919,8 +975,166 @@ const deleteWordList = async (listId) => {
   try {
     await invoke("delete_word_list", { wordListId: listId });
     await refreshWordBank();
+    void startLearningSession(true);
   } catch (error) {
     wordBankNotice.value = error instanceof Error ? error.message : String(error);
+  }
+};
+
+const normalizeLearningWords = (value) => (Array.isArray(value) ? value : []);
+
+const drawNextWord = () => {
+  if (!remainingWords.value.length) {
+    return null;
+  }
+  const index = Math.floor(Math.random() * remainingWords.value.length);
+  const [next] = remainingWords.value.splice(index, 1);
+  remainingWords.value = [...remainingWords.value];
+  return next ?? null;
+};
+
+const applySessionWords = (words, resetHistory) => {
+  remainingWords.value = [...words];
+  if (resetHistory) {
+    historyStack.value = [];
+  }
+};
+
+const fetchLearningSession = async () => {
+  const words = await invoke("allocate_learning_session");
+  return normalizeLearningWords(words);
+};
+
+const prefetchNextSession = async () => {
+  if (prefetchInFlight.value || prefetchWords.value.length > 0) {
+    return;
+  }
+  if (remainingWords.value.length > 6) {
+    return;
+  }
+  prefetchInFlight.value = true;
+  try {
+    const words = await fetchLearningSession();
+    if (words.length) {
+      prefetchWords.value = words;
+    }
+  } catch (_) {
+    // ignore prefetch failures to keep the main flow responsive
+  } finally {
+    prefetchInFlight.value = false;
+  }
+};
+
+const startLearningSession = async (resetHistory) => {
+  if (learningBusy.value) {
+    return false;
+  }
+  learningBusy.value = true;
+  learningNotice.value = "";
+  try {
+    const words = await fetchLearningSession();
+    if (!words.length) {
+      learningNotice.value = "当前词库暂无单词";
+      currentWord.value = null;
+      remainingWords.value = [];
+      return false;
+    }
+    applySessionWords(words, resetHistory);
+    currentWord.value = drawNextWord();
+    prefetchWords.value = [];
+    void prefetchNextSession();
+    return true;
+  } catch (error) {
+    learningNotice.value = error instanceof Error ? error.message : String(error);
+    currentWord.value = null;
+    remainingWords.value = [];
+    return false;
+  } finally {
+    learningBusy.value = false;
+  }
+};
+
+const ensureNextWord = async () => {
+  let nextWord = drawNextWord();
+  if (!nextWord) {
+    if (prefetchWords.value.length) {
+      applySessionWords(prefetchWords.value, false);
+      prefetchWords.value = [];
+      nextWord = drawNextWord();
+    } else {
+      const words = await fetchLearningSession();
+      if (words.length) {
+        applySessionWords(words, false);
+        nextWord = drawNextWord();
+      }
+    }
+  }
+  currentWord.value = nextWord;
+  if (!nextWord && !learningNotice.value) {
+    learningNotice.value = "当前词库暂无单词";
+  }
+  if (nextWord) {
+    void prefetchNextSession();
+  }
+};
+
+const goNext = async () => {
+  if (learningBusy.value) {
+    return;
+  }
+  learningNotice.value = "";
+  if (!currentWord.value) {
+    await startLearningSession(true);
+    return;
+  }
+  learningBusy.value = true;
+  try {
+    const progress = await invoke("increment_proficiency", {
+      wordId: currentWord.value.id,
+    });
+    historyStack.value = [
+      ...historyStack.value,
+      {
+        ...currentWord.value,
+        proficiency_score: progress.proficiency_score,
+      },
+    ];
+    await ensureNextWord();
+  } catch (error) {
+    learningNotice.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    learningBusy.value = false;
+  }
+};
+
+const goPrevious = () => {
+  if (!canGoPrevious.value) {
+    return;
+  }
+  learningNotice.value = "";
+  const next = historyStack.value[historyStack.value.length - 1];
+  historyStack.value = historyStack.value.slice(0, -1);
+  currentWord.value = next ?? null;
+};
+
+const markFuzzy = async () => {
+  if (!currentWord.value || learningBusy.value) {
+    return;
+  }
+  learningNotice.value = "";
+  learningBusy.value = true;
+  try {
+    const progress = await invoke("decrement_proficiency", {
+      wordId: currentWord.value.id,
+    });
+    currentWord.value = {
+      ...currentWord.value,
+      proficiency_score: progress.proficiency_score,
+    };
+  } catch (error) {
+    learningNotice.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    learningBusy.value = false;
   }
 };
 
@@ -959,18 +1173,18 @@ const confirmImport = async () => {
     if (wordListMode.value === "new") {
       const name = newWordListName.value.trim();
       if (!name) {
-        wordListNotice.value = "请输入词库名称";
+        wordListNotice.value = "璇疯緭鍏ヨ瘝搴撳悕绉?;
         return;
       }
       if (wordListCards.value.some((item) => item.name === name)) {
-        wordListNotice.value = "词库名称已存在";
+        wordListNotice.value = "璇嶅簱鍚嶇О宸插瓨鍦?;
         return;
       }
       wordListId = await invoke("create_word_list", { name });
     }
 
     if (!wordListId) {
-      wordListNotice.value = "请选择词库";
+      wordListNotice.value = "璇烽€夋嫨璇嶅簱";
       return;
     }
 
@@ -979,7 +1193,7 @@ const confirmImport = async () => {
       wordListId,
     });
     uploads.value = [];
-    importNotice.value = "导入完成";
+    importNotice.value = "瀵煎叆瀹屾垚";
     importDialogVisible.value = false;
     await refreshWordBank();
   } catch (error) {
@@ -1075,6 +1289,7 @@ onMounted(async () => {
     updateCompactFromCursor,
     CURSOR_POLL_INTERVAL_MS
   );
+  void startLearningSession(true);
 });
 
 onBeforeUnmount(() => {
@@ -1101,18 +1316,22 @@ onBeforeUnmount(() => {
   >
     <div v-if="isCompact" class="view view-compact">
       <div class="compact-shell" @mousedown="handleDragStart">
-        <span class="word word-compact">serendipity</span>
+        <span class="word word-compact">{{ displayWord }}</span>
       </div>
     </div>
 
     <div v-else class="view view-main">
       <main v-if="!isSettings" class="card">
         <div class="top-row" @mousedown="handleDragStart">
-          <div class="proficiency-box level-3" aria-label="Proficiency level 3"></div>
+          <div
+            class="proficiency-box"
+            :class="`level-${proficiencyLevel}`"
+            :aria-label="proficiencyLabel"
+          ></div>
           <button
             class="settings-button icon-button"
             type="button"
-            aria-label="设置"
+            aria-label="璁剧疆"
             @click="openSettings"
             @mousedown.stop
           >
@@ -1130,20 +1349,46 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="word-line">
-          <span class="word">serendipity</span>
-          <span class="phonetic">/ser-uhn-dip-i-tee/</span>
+          <span class="word">{{ displayWord }}</span>
+          <span v-if="displayPhonetic" class="phonetic">{{ displayPhonetic }}</span>
         </div>
 
-        <p class="word-cn">机缘巧合</p>
+        <p v-if="displayMeaning" class="word-cn">{{ displayMeaning }}</p>
 
-        <div class="example-group">
-          <p class="example">She found the quiet cafe by sheer serendipity.</p>
-          <p class="example-cn">她因机缘巧合找到了那家安静的咖啡馆。</p>
+        <div v-if="displayExample || displayExampleTranslation" class="example-group">
+          <p v-if="displayExample" class="example">{{ displayExample }}</p>
+          <p v-if="displayExampleTranslation" class="example-cn">
+            {{ displayExampleTranslation }}
+          </p>
         </div>
+
+        <p v-if="learningNotice" class="learning-notice">{{ learningNotice }}</p>
 
         <div class="nav-actions">
-          <button class="nav-button" type="button">Previous</button>
-          <button class="nav-button" type="button">Next</button>
+          <button
+            class="nav-button"
+            type="button"
+            :disabled="!canGoPrevious"
+            @click="goPrevious"
+          >
+            上一个
+          </button>
+          <button
+            class="nav-button"
+            type="button"
+            :disabled="!canMarkFuzzy"
+            @click="markFuzzy"
+          >
+            模糊
+          </button>
+          <button
+            class="nav-button"
+            type="button"
+            :disabled="!canGoNext"
+            @click="goNext"
+          >
+            {{ nextLabel }}
+          </button>
         </div>
       </main>
       <section v-else class="settings">
@@ -1151,12 +1396,12 @@ onBeforeUnmount(() => {
           <button
             class="back-button icon-button"
             type="button"
-            aria-label="返回"
+            aria-label="杩斿洖"
             @click="closeSettings"
             @mousedown.stop
             @mouseenter="showTooltip"
             @mouseleave="hideTooltip"
-            data-tooltip="返回"
+            data-tooltip="杩斿洖"
           >
             <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
               <path d="M13 6l-6 6 6 6" />
@@ -1175,8 +1420,8 @@ onBeforeUnmount(() => {
               @mousedown.stop
               @mouseenter="showTooltip"
               @mouseleave="hideTooltip"
-              aria-label="词库"
-              data-tooltip="词库"
+              aria-label="璇嶅簱"
+              data-tooltip="璇嶅簱"
               data-tooltip-position="right"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
@@ -1193,8 +1438,8 @@ onBeforeUnmount(() => {
               @mousedown.stop
               @mouseenter="showTooltip"
               @mouseleave="hideTooltip"
-              aria-label="模糊词"
-              data-tooltip="模糊词"
+              aria-label="妯＄硦璇?
+              data-tooltip="妯＄硦璇?
               data-tooltip-position="right"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
@@ -1211,8 +1456,8 @@ onBeforeUnmount(() => {
               @mousedown.stop
               @mouseenter="showTooltip"
               @mouseleave="hideTooltip"
-              aria-label="学习日历"
-              data-tooltip="学习日历"
+              aria-label="瀛︿範鏃ュ巻"
+              data-tooltip="瀛︿範鏃ュ巻"
               data-tooltip-position="right"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
@@ -1228,8 +1473,8 @@ onBeforeUnmount(() => {
               @mousedown.stop
               @mouseenter="showTooltip"
               @mouseleave="hideTooltip"
-              aria-label="导入"
-              data-tooltip="导入"
+              aria-label="瀵煎叆"
+              data-tooltip="瀵煎叆"
               data-tooltip-position="right"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
@@ -1247,8 +1492,8 @@ onBeforeUnmount(() => {
               @mousedown.stop
               @mouseenter="showTooltip"
               @mouseleave="hideTooltip"
-              aria-label="更多"
-              data-tooltip="更多"
+              aria-label="鏇村"
+              data-tooltip="鏇村"
               data-tooltip-position="right"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
@@ -1272,15 +1517,15 @@ onBeforeUnmount(() => {
               class="word-bank-panel"
             >
               <div class="word-bank-header">
-                <span class="word-bank-title">词库导航</span>
-                <span v-if="wordBankLoading" class="word-bank-status">加载中...</span>
+                <span class="word-bank-title">璇嶅簱瀵艰埅</span>
+                <span v-if="wordBankLoading" class="word-bank-status">鍔犺浇涓?..</span>
               </div>
               <p v-if="wordBankNotice" class="word-bank-notice">{{ wordBankNotice }}</p>
               <p
                 v-else-if="!sortedWordListCards.length && !wordBankLoading"
                 class="word-bank-empty"
               >
-                暂无词库
+                鏆傛棤璇嶅簱
               </p>
               <div v-if="sortedWordListCards.length" class="word-list-grid">
                 <div
@@ -1291,7 +1536,7 @@ onBeforeUnmount(() => {
                 >
                   <div class="word-list-meta">
                     <div class="word-list-title">{{ list.name }}</div>
-                    <div class="word-list-count">{{ list.word_count }} 个单词</div>
+                    <div class="word-list-count">{{ list.word_count }} 涓崟璇?/div>
                   </div>
                   <div class="word-list-actions">
                     <button
@@ -1303,7 +1548,7 @@ onBeforeUnmount(() => {
                           : setActiveWordList(list.id)
                       "
                     >
-                      {{ list.is_active ? "取消使用" : "使用" }}
+                      {{ list.is_active ? "鍙栨秷浣跨敤" : "浣跨敤" }}
                     </button>
                     <button
                       v-if="!list.is_active"
@@ -1311,7 +1556,7 @@ onBeforeUnmount(() => {
                       type="button"
                       @click="deleteWordList(list.id)"
                     >
-                      删除
+                      鍒犻櫎
                     </button>
                   </div>
                 </div>
@@ -1327,9 +1572,9 @@ onBeforeUnmount(() => {
                   type="button"
                   @click="openUploadPicker"
                 >
-                  上传文件
+                  涓婁紶鏂囦欢
                 </button>
-                <p class="import-hint">仅支持 0–100MB 的 CSV 文件</p>
+                <p class="import-hint">浠呮敮鎸?0鈥?00MB 鐨?CSV 鏂囦欢</p>
                 <p v-if="importNotice" class="import-notice">{{ importNotice }}</p>
               </div>
               <div v-if="uploads.length" class="upload-list">
@@ -1358,9 +1603,9 @@ onBeforeUnmount(() => {
                         @click="cancelUpload(item.id)"
                         @mouseenter="showTooltip"
                         @mouseleave="hideTooltip"
-                        data-tooltip="取消"
+                        data-tooltip="鍙栨秷"
                       >
-                        取消
+                        鍙栨秷
                       </button>
                       <template v-else-if="item.status === 'canceled'">
                         <button
@@ -1369,33 +1614,33 @@ onBeforeUnmount(() => {
                           @click="retryUpload(item.id)"
                           @mouseenter="showTooltip"
                           @mouseleave="hideTooltip"
-                          data-tooltip="重新上传"
+                          data-tooltip="閲嶆柊涓婁紶"
                         >
-                          重新上传
+                          閲嶆柊涓婁紶
                         </button>
                         <button
                           class="upload-action upload-delete"
                           type="button"
-                          aria-label="删除"
+                          aria-label="鍒犻櫎"
                           @click="removeUpload(item.id)"
                           @mouseenter="showTooltip"
                           @mouseleave="hideTooltip"
-                          data-tooltip="删除"
+                          data-tooltip="鍒犻櫎"
                         >
-                          ×
+                          脳
                         </button>
                       </template>
                       <button
                         v-else
                         class="upload-action upload-delete"
                         type="button"
-                        aria-label="删除"
+                        aria-label="鍒犻櫎"
                         @click="removeUpload(item.id)"
                         @mouseenter="showTooltip"
                         @mouseleave="hideTooltip"
-                        data-tooltip="删除"
+                        data-tooltip="鍒犻櫎"
                       >
-                        ×
+                        脳
                       </button>
                     </div>
                   </div>
@@ -1408,7 +1653,7 @@ onBeforeUnmount(() => {
                   type="button"
                   @click="continueUpload"
                 >
-                  继续上传
+                  缁х画涓婁紶
                 </button>
                 <button
                   v-if="showContinueUpload"
@@ -1417,12 +1662,12 @@ onBeforeUnmount(() => {
                   :disabled="!canImport"
                   @click="openImportDialog"
                 >
-                  {{ importBusy ? "导入中..." : "导入" }}
+                  {{ importBusy ? "瀵煎叆涓?.." : "瀵煎叆" }}
                 </button>
               </div>
             </div>
             <div v-else-if="settingsSection === 'more'" class="settings-more"></div>
-            <p v-else class="settings-placeholder">该模块正在完善中。</p>
+            <p v-else class="settings-placeholder">璇ユā鍧楁鍦ㄥ畬鍠勪腑銆?/p>
           </div>
         </div>
         <div
@@ -1440,7 +1685,7 @@ onBeforeUnmount(() => {
                     value="existing"
                     :disabled="!hasWordLists"
                   />
-                  <span>选择已有词库</span>
+                  <span>閫夋嫨宸叉湁璇嶅簱</span>
                 </label>
                 <div class="import-dialog-field">
                   <select
@@ -1456,26 +1701,26 @@ onBeforeUnmount(() => {
                       {{ list.name }}
                     </option>
                   </select>
-                  <p v-if="!hasWordLists" class="import-dialog-hint">暂无可选词库</p>
+                  <p v-if="!hasWordLists" class="import-dialog-hint">鏆傛棤鍙€夎瘝搴?/p>
                 </div>
               </div>
               <div class="import-dialog-option">
                 <label class="import-dialog-radio">
                   <input v-model="wordListMode" type="radio" value="new" />
-                  <span>新建词库</span>
+                  <span>鏂板缓璇嶅簱</span>
                 </label>
                 <div class="import-dialog-field">
                   <input
                     v-model="newWordListName"
                     class="import-dialog-input"
                     type="text"
-                    placeholder="输入词库名称"
+                    placeholder="杈撳叆璇嶅簱鍚嶇О"
                     :disabled="wordListMode !== 'new'"
                   />
                 </div>
               </div>
               <p v-if="wordListLoading" class="import-dialog-hint">
-                正在加载词库...
+                姝ｅ湪鍔犺浇璇嶅簱...
               </p>
               <p v-else-if="wordListNotice" class="import-dialog-notice">
                 {{ wordListNotice }}
@@ -1483,7 +1728,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="import-dialog-actions">
               <button class="dialog-button" type="button" @click="closeImportDialog">
-                取消
+                鍙栨秷
               </button>
               <button
                 class="dialog-button primary"
@@ -1491,7 +1736,7 @@ onBeforeUnmount(() => {
                 :disabled="!canConfirmImportDialog || importBusy"
                 @click="confirmImport"
               >
-                {{ importBusy ? "导入中..." : "确认导入" }}
+                {{ importBusy ? "瀵煎叆涓?.." : "纭瀵煎叆" }}
               </button>
             </div>
           </div>
@@ -1688,6 +1933,12 @@ onBeforeUnmount(() => {
   color: #2a2723;
 }
 
+.learning-notice {
+  margin: 0;
+  font-size: 0.52rem;
+  color: #9b1c1c;
+}
+
 .example-group {
   display: grid;
   gap: 2px;
@@ -1718,7 +1969,7 @@ onBeforeUnmount(() => {
 
 .nav-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 

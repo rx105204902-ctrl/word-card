@@ -45,6 +45,26 @@ pub struct WordListCard {
     pub is_active: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct LearningWord {
+    pub id: i64,
+    pub word: String,
+    pub phonetic: Option<String>,
+    pub part_of_speech_and_meanings: Option<String>,
+    pub example_sentence: Option<String>,
+    pub example_translation: Option<String>,
+    pub audio_uk: Option<String>,
+    pub audio_us: Option<String>,
+    pub proficiency_score: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LearningProgress {
+    pub word_id: i64,
+    pub proficiency_score: i64,
+    pub learn_count: i64,
+}
+
 fn validate_headers(headers: &csv::StringRecord) -> Result<()> {
     let normalized: Vec<String> = headers
         .iter()
@@ -155,6 +175,28 @@ CREATE TABLE IF NOT EXISTS word_list_state (
     .execute(pool)
     .await
     .context("Failed to initialize word_list_state row")?;
+
+    sqlx::query(
+        r#"
+CREATE TABLE IF NOT EXISTS user_word_learning (
+  word_id INTEGER PRIMARY KEY,
+  proficiency_score INTEGER NOT NULL DEFAULT 0,
+  last_learned_at TEXT,
+  learn_count INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (word_id) REFERENCES word(id)
+)
+"#,
+    )
+    .execute(pool)
+    .await
+    .context("Failed to initialize user_word_learning table")?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_user_word_learning_score ON user_word_learning(proficiency_score)",
+    )
+    .execute(pool)
+    .await
+    .context("Failed to initialize user_word_learning indexes")?;
 
     Ok(())
 }
@@ -441,4 +483,458 @@ pub async fn import_four_rank_csv_file_with_list(
     let csv_content = fs::read_to_string(file_path)
         .with_context(|| format!("读取 CSV 文件失败: {}", file_path.display()))?;
     import_four_rank_csv_internal(app, &csv_content, Some(word_list_id)).await
+}
+
+async fn fetch_active_word_list_id(pool: &SqlitePool) -> Result<i64> {
+    let active: Option<i64> =
+        sqlx::query_scalar("SELECT active_word_list_id FROM word_list_state WHERE id = 1")
+            .fetch_optional(pool)
+            .await
+            .context("Failed to load active word list")?;
+    match active {
+        Some(id) if id > 0 => Ok(id),
+        _ => bail!("No active word list selected."),
+    }
+}
+
+fn row_to_learning_word(row: sqlx::sqlite::SqliteRow) -> Result<LearningWord> {
+    Ok(LearningWord {
+        id: row.try_get("id").context("Failed to read word id")?,
+        word: row.try_get("word").context("Failed to read word")?,
+        phonetic: row
+            .try_get("phonetic")
+            .context("Failed to read phonetic")?,
+        part_of_speech_and_meanings: row
+            .try_get("part_of_speech_and_meanings")
+            .context("Failed to read meanings")?,
+        example_sentence: row
+            .try_get("example_sentence")
+            .context("Failed to read example sentence")?,
+        example_translation: row
+            .try_get("example_translation")
+            .context("Failed to read example translation")?,
+        audio_uk: row.try_get("audio_uk").context("Failed to read audio_uk")?,
+        audio_us: row.try_get("audio_us").context("Failed to read audio_us")?,
+        proficiency_score: row
+            .try_get("proficiency_score")
+            .context("Failed to read proficiency score")?,
+    })
+}
+
+async fn fetch_words_with_condition(
+    pool: &SqlitePool,
+    word_list_id: i64,
+    condition: &str,
+    exclude_ids: &[i64],
+    limit: i64,
+) -> Result<Vec<LearningWord>> {
+    if limit <= 0 {
+        return Ok(Vec::new());
+    }
+    let mut builder = QueryBuilder::new(
+        r#"
+SELECT
+  w.id AS id,
+  w.word AS word,
+  w.phonetic AS phonetic,
+  w.part_of_speech_and_meanings AS part_of_speech_and_meanings,
+  w.example_sentence AS example_sentence,
+  w.example_translation AS example_translation,
+  w.audio_uk AS audio_uk,
+  w.audio_us AS audio_us,
+  COALESCE(uwl.proficiency_score, 0) AS proficiency_score
+FROM word w
+JOIN word_list_map wlm ON w.id = wlm.word_id
+LEFT JOIN user_word_learning uwl ON w.id = uwl.word_id
+WHERE wlm.word_list_id = "#,
+    );
+    builder.push_bind(word_list_id);
+    if !condition.trim().is_empty() {
+        builder.push(" AND ");
+        builder.push(condition);
+    }
+    if !exclude_ids.is_empty() {
+        builder.push(" AND w.id NOT IN (");
+        let mut separated = builder.separated(", ");
+        for id in exclude_ids {
+            separated.push_bind(id);
+        }
+        builder.push(")");
+    }
+    builder.push(" ORDER BY RANDOM() LIMIT ");
+    builder.push_bind(limit);
+
+    let rows = builder
+        .build()
+        .fetch_all(pool)
+        .await
+        .context("Failed to load learning words")?;
+
+    rows.into_iter().map(row_to_learning_word).collect()
+}
+
+async fn allocate_learning_session_for_list(
+    pool: &SqlitePool,
+    word_list_id: i64,
+) -> Result<Vec<LearningWord>> {
+    let mut selected = Vec::new();
+    let mut selected_ids = Vec::new();
+
+    let unlearned = fetch_words_with_condition(
+        pool,
+        word_list_id,
+        "uwl.word_id IS NULL",
+        &selected_ids,
+        20,
+    )
+    .await?;
+    for word in unlearned {
+        selected_ids.push(word.id);
+        selected.push(word);
+    }
+
+    let low = fetch_words_with_condition(
+        pool,
+        word_list_id,
+        "uwl.word_id IS NOT NULL AND uwl.proficiency_score < 4",
+        &selected_ids,
+        20,
+    )
+    .await?;
+    for word in low {
+        selected_ids.push(word.id);
+        selected.push(word);
+    }
+
+    let mid = fetch_words_with_condition(
+        pool,
+        word_list_id,
+        "uwl.word_id IS NOT NULL AND uwl.proficiency_score BETWEEN 4 AND 8",
+        &selected_ids,
+        6,
+    )
+    .await?;
+    for word in mid {
+        selected_ids.push(word.id);
+        selected.push(word);
+    }
+
+    let high = fetch_words_with_condition(
+        pool,
+        word_list_id,
+        "uwl.word_id IS NOT NULL AND uwl.proficiency_score BETWEEN 8 AND 10",
+        &selected_ids,
+        4,
+    )
+    .await?;
+    for word in high {
+        selected_ids.push(word.id);
+        selected.push(word);
+    }
+
+    let remaining = 50_i64.saturating_sub(selected.len() as i64);
+    if remaining > 0 {
+        let fill =
+            fetch_words_with_condition(pool, word_list_id, "1 = 1", &selected_ids, remaining)
+                .await?;
+        for word in fill {
+            selected_ids.push(word.id);
+            selected.push(word);
+        }
+    }
+
+    if selected.is_empty() {
+        bail!("No words available in the active list.");
+    }
+
+    Ok(selected)
+}
+
+pub async fn allocate_learning_session(app: &tauri::AppHandle) -> Result<Vec<LearningWord>> {
+    let pool = open_pool(app).await?;
+    ensure_schema(&pool).await?;
+    let word_list_id = fetch_active_word_list_id(&pool).await?;
+    allocate_learning_session_for_list(&pool, word_list_id).await
+}
+
+async fn ensure_learning_row(pool: &SqlitePool, word_id: i64) -> Result<()> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO user_word_learning (word_id, proficiency_score, last_learned_at, learn_count) VALUES (?, 0, datetime('now'), 0)",
+    )
+    .bind(word_id)
+    .execute(pool)
+    .await
+    .context("Failed to initialize learning row")?;
+    Ok(())
+}
+
+async fn read_learning_progress(pool: &SqlitePool, word_id: i64) -> Result<LearningProgress> {
+    let row = sqlx::query(
+        "SELECT proficiency_score, learn_count FROM user_word_learning WHERE word_id = ?",
+    )
+    .bind(word_id)
+    .fetch_one(pool)
+    .await
+    .context("Failed to read learning progress")?;
+    Ok(LearningProgress {
+        word_id,
+        proficiency_score: row
+            .try_get("proficiency_score")
+            .context("Failed to read proficiency score")?,
+        learn_count: row
+            .try_get("learn_count")
+            .context("Failed to read learn count")?,
+    })
+}
+
+async fn increment_proficiency_for_word(
+    pool: &SqlitePool,
+    word_id: i64,
+) -> Result<LearningProgress> {
+    ensure_learning_row(pool, word_id).await?;
+    sqlx::query(
+        r#"
+UPDATE user_word_learning
+SET proficiency_score = MIN(10, proficiency_score + 1),
+    learn_count = learn_count + 1,
+    last_learned_at = datetime('now')
+WHERE word_id = ?
+"#,
+    )
+    .bind(word_id)
+    .execute(pool)
+    .await
+    .context("Failed to increment proficiency")?;
+    read_learning_progress(pool, word_id).await
+}
+
+async fn decrement_proficiency_for_word(
+    pool: &SqlitePool,
+    word_id: i64,
+) -> Result<LearningProgress> {
+    ensure_learning_row(pool, word_id).await?;
+    sqlx::query(
+        r#"
+UPDATE user_word_learning
+SET proficiency_score = MAX(0, proficiency_score - 1),
+    last_learned_at = datetime('now')
+WHERE word_id = ?
+"#,
+    )
+    .bind(word_id)
+    .execute(pool)
+    .await
+    .context("Failed to decrement proficiency")?;
+    read_learning_progress(pool, word_id).await
+}
+
+pub async fn increment_proficiency(
+    app: &tauri::AppHandle,
+    word_id: i64,
+) -> Result<LearningProgress> {
+    if word_id <= 0 {
+        bail!("Invalid word id");
+    }
+    let pool = open_pool(app).await?;
+    ensure_schema(&pool).await?;
+    increment_proficiency_for_word(&pool, word_id).await
+}
+
+pub async fn decrement_proficiency(
+    app: &tauri::AppHandle,
+    word_id: i64,
+) -> Result<LearningProgress> {
+    if word_id <= 0 {
+        bail!("Invalid word id");
+    }
+    let pool = open_pool(app).await?;
+    ensure_schema(&pool).await?;
+    decrement_proficiency_for_word(&pool, word_id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri::async_runtime;
+
+    async fn setup_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(":memory:")
+                    .create_if_missing(true),
+            )
+            .await
+            .expect("Failed to open test database");
+        ensure_schema(&pool)
+            .await
+            .expect("Failed to ensure schema");
+        pool
+    }
+
+    async fn insert_word(pool: &SqlitePool, word: &str) -> i64 {
+        let result = sqlx::query(
+            r#"
+INSERT INTO word (
+  word,
+  phonetic,
+  part_of_speech_and_meanings,
+  example_sentence,
+  example_translation,
+  audio_uk,
+  audio_us
+)
+VALUES (?, NULL, NULL, NULL, NULL, NULL, NULL)
+"#,
+        )
+        .bind(word)
+        .execute(pool)
+        .await
+        .expect("Failed to insert word");
+        result.last_insert_rowid()
+    }
+
+    async fn map_word(pool: &SqlitePool, word_list_id: i64, word_id: i64) {
+        sqlx::query("INSERT INTO word_list_map (word_list_id, word_id) VALUES (?, ?)")
+            .bind(word_list_id)
+            .bind(word_id)
+            .execute(pool)
+            .await
+            .expect("Failed to map word");
+    }
+
+    #[test]
+    fn proficiency_updates_are_bounded() {
+        async_runtime::block_on(async {
+            let pool = setup_pool().await;
+            let word_id = insert_word(&pool, "alpha").await;
+            ensure_learning_row(&pool, word_id)
+                .await
+                .expect("Failed to ensure learning row");
+
+            let progress = increment_proficiency_for_word(&pool, word_id)
+                .await
+                .expect("Failed to increment");
+            assert_eq!(progress.proficiency_score, 1);
+
+            sqlx::query("UPDATE user_word_learning SET proficiency_score = 10 WHERE word_id = ?")
+                .bind(word_id)
+                .execute(&pool)
+                .await
+                .expect("Failed to update score");
+            let progress = increment_proficiency_for_word(&pool, word_id)
+                .await
+                .expect("Failed to increment at max");
+            assert_eq!(progress.proficiency_score, 10);
+
+            sqlx::query("UPDATE user_word_learning SET proficiency_score = 0 WHERE word_id = ?")
+                .bind(word_id)
+                .execute(&pool)
+                .await
+                .expect("Failed to reset score");
+            let progress = decrement_proficiency_for_word(&pool, word_id)
+                .await
+                .expect("Failed to decrement at min");
+            assert_eq!(progress.proficiency_score, 0);
+        });
+    }
+
+    #[test]
+    fn session_allocation_respects_buckets_and_list() {
+        async_runtime::block_on(async {
+            let pool = setup_pool().await;
+            let list_id = sqlx::query("INSERT INTO word_list (name) VALUES (?)")
+                .bind("list-a")
+                .execute(&pool)
+                .await
+                .expect("Failed to create list")
+                .last_insert_rowid();
+            let other_list_id = sqlx::query("INSERT INTO word_list (name) VALUES (?)")
+                .bind("list-b")
+                .execute(&pool)
+                .await
+                .expect("Failed to create list")
+                .last_insert_rowid();
+
+            let mut ids = Vec::new();
+            for i in 0..50 {
+                let word_id = insert_word(&pool, &format!("word_{i}")).await;
+                map_word(&pool, list_id, word_id).await;
+                ids.push(word_id);
+            }
+            for i in 0..6 {
+                let word_id = insert_word(&pool, &format!("other_{i}")).await;
+                map_word(&pool, other_list_id, word_id).await;
+            }
+
+            for word_id in &ids[20..40] {
+                sqlx::query(
+                    "INSERT INTO user_word_learning (word_id, proficiency_score, learn_count) VALUES (?, 2, 1)",
+                )
+                .bind(*word_id)
+                .execute(&pool)
+                .await
+                .expect("Failed to insert low score");
+            }
+            for word_id in &ids[40..46] {
+                sqlx::query(
+                    "INSERT INTO user_word_learning (word_id, proficiency_score, learn_count) VALUES (?, 5, 1)",
+                )
+                .bind(*word_id)
+                .execute(&pool)
+                .await
+                .expect("Failed to insert mid score");
+            }
+            for word_id in &ids[46..50] {
+                sqlx::query(
+                    "INSERT INTO user_word_learning (word_id, proficiency_score, learn_count) VALUES (?, 9, 1)",
+                )
+                .bind(*word_id)
+                .execute(&pool)
+                .await
+                .expect("Failed to insert high score");
+            }
+
+            let session = allocate_learning_session_for_list(&pool, list_id)
+                .await
+                .expect("Failed to allocate session");
+            assert_eq!(session.len(), 50);
+
+            let mut unlearned = 0;
+            let mut low = 0;
+            let mut mid = 0;
+            let mut high = 0;
+            for word in session {
+                let in_list: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(1) FROM word_list_map WHERE word_list_id = ? AND word_id = ?",
+                )
+                .bind(list_id)
+                .bind(word.id)
+                .fetch_one(&pool)
+                .await
+                .expect("Failed to check list mapping");
+                assert_eq!(in_list, 1);
+
+                let score: Option<i64> = sqlx::query_scalar(
+                    "SELECT proficiency_score FROM user_word_learning WHERE word_id = ?",
+                )
+                .bind(word.id)
+                .fetch_optional(&pool)
+                .await
+                .expect("Failed to read score");
+                match score {
+                    None => unlearned += 1,
+                    Some(value) if value < 4 => low += 1,
+                    Some(value) if value <= 8 => mid += 1,
+                    Some(_) => high += 1,
+                }
+            }
+
+            assert_eq!(unlearned, 20);
+            assert_eq!(low, 20);
+            assert_eq!(mid, 6);
+            assert_eq!(high, 4);
+        });
+    }
 }

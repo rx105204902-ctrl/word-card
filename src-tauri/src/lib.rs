@@ -53,6 +53,35 @@ async fn delete_word_list(app: tauri::AppHandle, word_list_id: i64) -> Result<()
 }
 
 #[tauri::command]
+async fn allocate_learning_session(
+    app: tauri::AppHandle,
+) -> Result<Vec<word_bank::LearningWord>, String> {
+    word_bank::allocate_learning_session(&app)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn increment_proficiency(
+    app: tauri::AppHandle,
+    word_id: i64,
+) -> Result<word_bank::LearningProgress, String> {
+    word_bank::increment_proficiency(&app, word_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn decrement_proficiency(
+    app: tauri::AppHandle,
+    word_id: i64,
+) -> Result<word_bank::LearningProgress, String> {
+    word_bank::decrement_proficiency(&app, word_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn start_upload(
     app: tauri::AppHandle,
     state: tauri::State<'_, file_upload::UploadState>,
@@ -152,6 +181,9 @@ pub fn run() {
             set_active_word_list,
             clear_active_word_list,
             delete_word_list,
+            allocate_learning_session,
+            increment_proficiency,
+            decrement_proficiency,
             start_upload,
             upload_chunk,
             finish_upload,
