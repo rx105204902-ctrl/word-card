@@ -2008,6 +2008,7 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 2px;
   align-content: start;
+  margin-top: 2px;
 }
 
 .example {
