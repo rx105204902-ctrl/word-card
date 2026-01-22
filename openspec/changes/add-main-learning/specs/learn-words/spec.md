@@ -1,12 +1,20 @@
 ## ADDED Requirements
 ### Requirement: Learning session allocation
 The system SHALL allocate a learning session of exactly 50 words whenever the user enters learning mode.
+The system SHALL only select words from the active word list.
 The allocation SHALL include 20 words never learned before, 20 words with proficiency_score < 4, 6 words with proficiency_score between 4 and 8 inclusive, and 4 words with proficiency_score between 8 and 10 inclusive.
 If any bucket lacks enough words, the system SHALL fill the remaining slots from other buckets while still totaling 50 words.
 
 #### Scenario: Allocate session with shortages
-- **WHEN** the user enters learning mode and a bucket has fewer words than required
-- **THEN** the system allocates 50 total words by filling the remaining slots from other buckets.
+- **WHEN** the user enters learning mode for an active word list and a bucket has fewer words than required
+- **THEN** the system allocates 50 total words from that active list by filling the remaining slots from other buckets.
+
+### Requirement: Session rollover
+After the user completes all 50 words in the current session, the system SHALL allocate the next session of 50 words using the same allocation rules and without requiring manual reloads.
+
+#### Scenario: Continue after finishing a session
+- **WHEN** the user finishes the last word in the current session and presses Next
+- **THEN** the system allocates a new 50-word session from the active list and displays the next word without leaving learning mode.
 
 ### Requirement: Random word navigation with history stack
 The home screen SHALL display words in random order within the current learning session.

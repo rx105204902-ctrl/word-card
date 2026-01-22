@@ -4,7 +4,7 @@
 The current home screen lacks a structured learning flow that tracks progress and proficiency per word. This change defines the learning session, navigation, and feedback loop needed for effective study.
 
 ## What Changes
-- Add a learning session that allocates 50 words per entry and presents them in random order.
+- Add a learning session that allocates 50 words per entry from the active word list, presents them in random order, and rolls over automatically after completion.
 - Add a user_word_learning table to track proficiency_score, last_learned_at, and learn_count per word.
 - Add Previous, Next, and Fuzzy actions with a history stack for backtracking.
 - Add a proficiency indicator on the home screen.
