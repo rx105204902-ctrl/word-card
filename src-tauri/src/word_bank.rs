@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::QueryBuilder;
 use sqlx::Row;
 use sqlx::SqlitePool;
 use tauri::Manager;
