@@ -1961,6 +1961,8 @@ onBeforeUnmount(() => {
 .word-cn {
   margin: 0;
   font-size: 0.65rem;
+  line-height: 1.3;
+  min-height: 1.7rem;
   color: #2a2723;
   display: -webkit-box;
   -webkit-line-clamp: 2;
