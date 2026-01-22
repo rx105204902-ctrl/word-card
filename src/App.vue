@@ -1331,7 +1331,7 @@ onBeforeUnmount(() => {
           <button
             class="settings-button icon-button"
             type="button"
-            aria-label="璁剧疆"
+            aria-label="设置"
             @click="openSettings"
             @mousedown.stop
           >
@@ -1396,22 +1396,22 @@ onBeforeUnmount(() => {
           <button
             class="back-button icon-button"
             type="button"
-            aria-label="杩斿洖"
+            aria-label="返回"
             @click="closeSettings"
             @mousedown.stop
             @mouseenter="showTooltip"
             @mouseleave="hideTooltip"
-            data-tooltip="杩斿洖"
+            data-tooltip="返回"
           >
             <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
               <path d="M13 6l-6 6 6 6" />
               <path d="M7 12h10" />
             </svg>
           </button>
-          <span class="settings-title">Settings</span>
+          <span class="settings-title">设置</span>
         </header>
         <div class="settings-body">
-          <nav class="settings-nav" aria-label="Settings sections">
+          <nav class="settings-nav" aria-label="设置导航">
             <button
               class="settings-nav-item icon-button"
               :class="{ 'is-active': settingsSection === 'word-bank' }"
@@ -1420,8 +1420,8 @@ onBeforeUnmount(() => {
               @mousedown.stop
               @mouseenter="showTooltip"
               @mouseleave="hideTooltip"
-              aria-label="璇嶅簱"
-              data-tooltip="璇嶅簱"
+              aria-label="词库"
+              data-tooltip="词库"
               data-tooltip-position="right"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
@@ -1456,8 +1456,8 @@ onBeforeUnmount(() => {
               @mousedown.stop
               @mouseenter="showTooltip"
               @mouseleave="hideTooltip"
-              aria-label="瀛︿範鏃ュ巻"
-              data-tooltip="瀛︿範鏃ュ巻"
+              aria-label="学习日历"
+              data-tooltip="学习日历"
               data-tooltip-position="right"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
@@ -1685,7 +1685,7 @@ onBeforeUnmount(() => {
                     value="existing"
                     :disabled="!hasWordLists"
                   />
-                  <span>閫夋嫨宸叉湁璇嶅簱</span>
+                  <span>选择已有词库</span>
                 </label>
                 <div class="import-dialog-field">
                   <select
@@ -1707,14 +1707,14 @@ onBeforeUnmount(() => {
               <div class="import-dialog-option">
                 <label class="import-dialog-radio">
                   <input v-model="wordListMode" type="radio" value="new" />
-                  <span>鏂板缓璇嶅簱</span>
+                  <span>新建词库</span>
                 </label>
                 <div class="import-dialog-field">
                   <input
                     v-model="newWordListName"
                     class="import-dialog-input"
                     type="text"
-                    placeholder="杈撳叆璇嶅簱鍚嶇О"
+                    placeholder="输入词库名称"
                     :disabled="wordListMode !== 'new'"
                   />
                 </div>

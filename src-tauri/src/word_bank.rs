@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -92,7 +93,8 @@ async fn open_pool(app: &tauri::AppHandle) -> Result<SqlitePool> {
     let db_path = app_data_dir.join("word-card.sqlite3");
     let options = SqliteConnectOptions::new()
         .filename(&db_path)
-        .create_if_missing(true);
+        .create_if_missing(true)
+        .busy_timeout(Duration::from_secs(3));
 
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -658,13 +660,31 @@ pub async fn allocate_learning_session(app: &tauri::AppHandle) -> Result<Vec<Lea
 }
 
 async fn ensure_learning_row(pool: &SqlitePool, word_id: i64) -> Result<()> {
-    sqlx::query(
-        "INSERT OR IGNORE INTO user_word_learning (word_id, proficiency_score, last_learned_at, learn_count) VALUES (?, 0, datetime('now'), 0)",
+    let result = sqlx::query(
+        r#"
+INSERT OR IGNORE INTO user_word_learning (word_id, proficiency_score, last_learned_at, learn_count)
+SELECT ?, 0, datetime('now'), 0
+WHERE EXISTS (SELECT 1 FROM word WHERE id = ?)
+"#,
     )
+    .bind(word_id)
     .bind(word_id)
     .execute(pool)
     .await
     .context("Failed to initialize learning row")?;
+
+    if result.rows_affected() == 0 {
+        let exists: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM user_word_learning WHERE word_id = ?",
+        )
+        .bind(word_id)
+        .fetch_optional(pool)
+        .await
+        .context("Failed to verify learning row")?;
+        if exists.is_none() {
+            bail!("当前单词不存在或已被删除");
+        }
+    }
     Ok(())
 }
 
