@@ -38,6 +38,12 @@ const hasCompletedUploads = computed(() =>
   uploads.value.some((item) => item.status === "completed")
 );
 const hasWordLists = computed(() => wordListCards.value.length > 0);
+const hasActiveWordList = computed(() =>
+  wordListCards.value.some((item) => item.is_active)
+);
+const showEmptyState = computed(
+  () => !wordBankLoading.value && !hasActiveWordList.value
+);
 const sortedWordListCards = computed(() => {
   const list = [...wordListCards.value];
   list.sort((a, b) => Number(b.is_active) - Number(a.is_active));
@@ -75,11 +81,16 @@ const displayExampleTranslation = computed(
   () => currentWord.value?.example_translation ?? ""
 );
 const canGoPrevious = computed(
-  () => historyStack.value.length > 0 && !learningBusy.value
+  () =>
+    hasActiveWordList.value &&
+    historyStack.value.length > 0 &&
+    !learningBusy.value
 );
-const canGoNext = computed(() => !learningBusy.value);
+const canGoNext = computed(
+  () => hasActiveWordList.value && !learningBusy.value
+);
 const canMarkFuzzy = computed(
-  () => hasCurrentWord.value && !learningBusy.value
+  () => hasActiveWordList.value && hasCurrentWord.value && !learningBusy.value
 );
 const nextLabel = computed(() => {
   if (learningBusy.value) {
@@ -1029,6 +1040,16 @@ const startLearningSession = async (resetHistory) => {
   if (learningBusy.value) {
     return false;
   }
+  if (!hasActiveWordList.value) {
+    learningNotice.value = "";
+    currentWord.value = null;
+    remainingWords.value = [];
+    prefetchWords.value = [];
+    if (resetHistory) {
+      historyStack.value = [];
+    }
+    return false;
+  }
   learningBusy.value = true;
   learningNotice.value = "";
   try {
@@ -1079,7 +1100,7 @@ const ensureNextWord = async () => {
 };
 
 const goNext = async () => {
-  if (learningBusy.value) {
+  if (learningBusy.value || !hasActiveWordList.value) {
     return;
   }
   learningNotice.value = "";
@@ -1108,7 +1129,7 @@ const goNext = async () => {
 };
 
 const goPrevious = () => {
-  if (!canGoPrevious.value) {
+  if (!canGoPrevious.value || !hasActiveWordList.value) {
     return;
   }
   learningNotice.value = "";
@@ -1118,7 +1139,7 @@ const goPrevious = () => {
 };
 
 const markFuzzy = async () => {
-  if (!currentWord.value || learningBusy.value) {
+  if (!currentWord.value || learningBusy.value || !hasActiveWordList.value) {
     return;
   }
   learningNotice.value = "";
@@ -1270,6 +1291,7 @@ onMounted(async () => {
   void setWindowMaximizable(false);
   desiredCompact = true;
   await applyDesiredMode();
+  await refreshWordBank();
   const appWindow = getAppWindow();
   if (appWindow) {
     unlistenMove = await appWindow.onMoved(() => {
@@ -1348,47 +1370,53 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <div class="word-line">
-          <span class="word">{{ displayWord }}</span>
-          <span v-if="displayPhonetic" class="phonetic">{{ displayPhonetic }}</span>
-        </div>
+        <template v-if="!showEmptyState">
+          <div class="word-line">
+            <span class="word">{{ displayWord }}</span>
+            <span v-if="displayPhonetic" class="phonetic">{{ displayPhonetic }}</span>
+          </div>
 
-        <p v-if="displayMeaning" class="word-cn">{{ displayMeaning }}</p>
+          <p v-if="displayMeaning" class="word-cn">{{ displayMeaning }}</p>
 
-        <div v-if="displayExample || displayExampleTranslation" class="example-group">
-          <p v-if="displayExample" class="example">{{ displayExample }}</p>
-          <p v-if="displayExampleTranslation" class="example-cn">
-            {{ displayExampleTranslation }}
-          </p>
-        </div>
+          <div v-if="displayExample || displayExampleTranslation" class="example-group">
+            <p v-if="displayExample" class="example">{{ displayExample }}</p>
+            <p v-if="displayExampleTranslation" class="example-cn">
+              {{ displayExampleTranslation }}
+            </p>
+          </div>
 
-        <p v-if="learningNotice" class="learning-notice">{{ learningNotice }}</p>
+          <p v-if="learningNotice" class="learning-notice">{{ learningNotice }}</p>
 
-        <div class="nav-actions">
-          <button
-            class="nav-button"
-            type="button"
-            :disabled="!canGoPrevious"
-            @click="goPrevious"
-          >
-            上一个
-          </button>
-          <button
-            class="nav-button"
-            type="button"
-            :disabled="!canMarkFuzzy"
-            @click="markFuzzy"
-          >
-            模糊
-          </button>
-          <button
-            class="nav-button"
-            type="button"
-            :disabled="!canGoNext"
-            @click="goNext"
-          >
-            {{ nextLabel }}
-          </button>
+          <div class="nav-actions">
+            <button
+              class="nav-button"
+              type="button"
+              :disabled="!canGoPrevious"
+              @click="goPrevious"
+            >
+              上一个
+            </button>
+            <button
+              class="nav-button"
+              type="button"
+              :disabled="!canMarkFuzzy"
+              @click="markFuzzy"
+            >
+              模糊
+            </button>
+            <button
+              class="nav-button"
+              type="button"
+              :disabled="!canGoNext"
+              @click="goNext"
+            >
+              {{ nextLabel }}
+            </button>
+          </div>
+        </template>
+        <div v-else class="empty-state">
+          <p class="empty-title">未选择词库</p>
+          <p class="empty-desc">请前往设置选择或创建词库。</p>
         </div>
       </main>
       <section v-else class="settings">
@@ -1937,6 +1965,28 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 0.52rem;
   color: #9b1c1c;
+}
+
+.empty-state {
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+  min-height: 60px;
+}
+
+.empty-title {
+  margin: 0;
+  font-size: 0.7rem;
+  color: #1f1d1a;
+  font-weight: 600;
+}
+
+.empty-desc {
+  margin: 0;
+  font-size: 0.55rem;
+  color: var(--muted);
 }
 
 .example-group {
