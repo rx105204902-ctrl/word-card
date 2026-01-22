@@ -111,7 +111,7 @@ const tooltip = ref({
 let desiredCompact = true;
 let resizeInFlight = false;
 
-const FULL_SIZE = { width: 350, height: 150 };
+const FULL_SIZE = { width: 350, height: 155 };
 const COMPACT_SIZE = { width: 150, height: 50 };
 const CURSOR_POLL_INTERVAL_MS = 120;
 const SNAP_THRESHOLD = 16;
