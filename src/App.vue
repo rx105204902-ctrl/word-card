@@ -1003,7 +1003,7 @@ const applyDesiredMode = async () => {
       snapAnchor &&
       (snapAnchor.kind === "edge-left" || snapAnchor.kind === "edge-right");
     if (hideMode.value === "edge") {
-      if (nextCompact || !hasEdgeAnchor) {
+      if (!hasEdgeAnchor) {
         await updateSnapAnchorToEdge();
       }
     } else {
@@ -2073,7 +2073,11 @@ onMounted(async () => {
   if (appWindow) {
     unlistenMove = await appWindow.onMoved(() => {
       if (!isRepositioning) {
-        scheduleSnapToEdges();
+        if (hideMode.value === "edge") {
+          void updateSnapAnchorToEdge();
+        } else {
+          scheduleSnapToEdges();
+        }
       }
     });
     unlistenFocus = await appWindow.onFocusChanged(({ payload }) => {
