@@ -99,6 +99,7 @@ const proficiencyLabel = computed(
   () => `熟练度等级 ${proficiencyLevel.value}`
 );
 const displayWord = computed(() => currentWord.value?.word ?? "...");
+const trayTooltipWord = computed(() => currentWord.value?.word ?? "");
 const displayPhonetic = computed(() => currentWord.value?.phonetic ?? "");
 const displayMeaning = computed(
   () => currentWord.value?.part_of_speech_and_meanings ?? ""
@@ -251,6 +252,17 @@ watch(fullWidth, (value) => {
     fullWidthDraft.value = value;
   }
 });
+watch(
+  trayTooltipWord,
+  async (value) => {
+    try {
+      await invoke("set_tray_tooltip", { word: value });
+    } catch (error) {
+      console.warn("Failed to update tray tooltip", error);
+    }
+  },
+  { immediate: true }
+);
 const dailyStudyCountMap = computed(() => {
   const map = {};
   studyCalendarCounts.value.forEach((item) => {
@@ -1144,7 +1156,7 @@ const syncHideMode = () => {
 };
 
 const applyHideMode = (mode) => {
-  if (mode !== "compact" && mode !== "edge") {
+  if (mode !== "compact") {
     return;
   }
   hideMode.value = mode;
@@ -2845,14 +2857,6 @@ onBeforeUnmount(() => {
                 <span>窗口大小调整</span>
                 <span class="settings-more-arrow">></span>
               </button>
-              <button
-                class="settings-more-item"
-                type="button"
-                @click="setSettingsSection('more-hide-mode')"
-              >
-                <span>隐藏方式</span>
-                <span class="settings-more-arrow">></span>
-              </button>
             </div>
             <div
               v-else-if="settingsSection === 'more-window-size'"
@@ -2884,41 +2888,6 @@ onBeforeUnmount(() => {
                 <p class="settings-more-hint">
                   最大宽度 450px，按当前比例自动调整高度。
                 </p>
-              </div>
-            </div>
-            <div
-              v-else-if="settingsSection === 'more-hide-mode'"
-              class="settings-more-detail"
-            >
-              <div class="settings-more-header">
-                <button
-                  class="settings-more-back"
-                  type="button"
-                  @click="setSettingsSection('more')"
-                >
-                  返回
-                </button>
-                <span class="settings-more-title">隐藏方式</span>
-              </div>
-              <div class="settings-more-card">
-                <label class="settings-more-option">
-                  <input
-                    v-model="hideMode"
-                    type="radio"
-                    value="compact"
-                    @change="syncHideMode"
-                  />
-                  <span>缩小化</span>
-                </label>
-                <label class="settings-more-option">
-                  <input
-                    v-model="hideMode"
-                    type="radio"
-                    value="edge"
-                    @change="syncHideMode"
-                  />
-                  <span>隐藏</span>
-                </label>
               </div>
             </div>
             <p v-else class="settings-placeholder">该模块正在完善中。</p>

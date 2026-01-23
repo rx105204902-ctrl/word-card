@@ -2,7 +2,6 @@ mod file_upload;
 mod word_bank;
 
 use tauri::{
-    Emitter,
     Manager,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -16,7 +15,28 @@ fn greet(name: &str) -> String {
 
 #[tauri::command]
 fn hide_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    minimize_window_to_tray(&app)
+}
+
+#[tauri::command]
+fn set_tray_tooltip(app: tauri::AppHandle, word: String) -> Result<(), String> {
+    let trimmed = word.trim();
+    let tooltip = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    };
+    if let Some(tray) = app.tray_by_id("main") {
+        tray
+            .set_tooltip(tooltip)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn minimize_window_to_tray(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
+        let _ = window.minimize();
         window.hide().map_err(|error| error.to_string())?;
     }
     Ok(())
@@ -219,23 +239,24 @@ pub fn run() {
             if let Err(error) = tauri::async_runtime::block_on(word_bank::init_database(&app.handle())) {
                 eprintln!("Failed to initialize database: {error}");
             }
-            let hide_compact = MenuItemBuilder::with_id("hide-compact", "缩小化").build(app)?;
-            let hide_edge = MenuItemBuilder::with_id("hide-edge", "隐藏").build(app)?;
+            let minimize_to_tray =
+                MenuItemBuilder::with_id("minimize-to-tray", "最小化到托盘").build(app)?;
+            let quit_app = MenuItemBuilder::with_id("quit-app", "退出").build(app)?;
             let menu = MenuBuilder::new(app)
-                .items(&[&hide_compact, &hide_edge])
+                .items(&[&minimize_to_tray, &quit_app])
                 .build()?;
-            let mut tray_builder = TrayIconBuilder::new().tooltip("word-card");
+            let mut tray_builder = TrayIconBuilder::with_id("main").tooltip("word-card");
             if let Some(icon) = app.default_window_icon() {
                 tray_builder = tray_builder.icon(icon.clone());
             }
             let _tray = tray_builder
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "hide-compact" => {
-                        let _ = app.emit("hide-mode-change", "compact");
+                    "minimize-to-tray" => {
+                        let _ = minimize_window_to_tray(app);
                     }
-                    "hide-edge" => {
-                        let _ = app.emit("hide-mode-change", "edge");
+                    "quit-app" => {
+                        app.exit(0);
                     }
                     _ => (),
                 })
@@ -257,9 +278,7 @@ pub fn run() {
                         } => {
                             show_window();
                         }
-                        TrayIconEvent::DoubleClick { .. }
-                        | TrayIconEvent::Enter { .. }
-                        | TrayIconEvent::Move { .. } => {
+                        TrayIconEvent::DoubleClick { .. } => {
                             show_window();
                         }
                         _ => {}
@@ -288,7 +307,8 @@ pub fn run() {
             import_uploaded_files,
             list_daily_study_counts,
             list_fuzzy_words,
-            clear_fuzzy_marks
+            clear_fuzzy_marks,
+            set_tray_tooltip
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
