@@ -2,6 +2,7 @@ mod file_upload;
 mod word_bank;
 
 use tauri::{
+    image::Image,
     Emitter,
     Manager,
     menu::{MenuBuilder, MenuItemBuilder},
@@ -219,15 +220,15 @@ pub fn run() {
             if let Err(error) = tauri::async_runtime::block_on(word_bank::init_database(&app.handle())) {
                 eprintln!("Failed to initialize database: {error}");
             }
+            let tray_icon = Image::from_bytes(include_bytes!("../icons/icon.png"))
+                .expect("Failed to load tray icon");
             let hide_compact = MenuItemBuilder::with_id("hide-compact", "缩小化").build(app)?;
             let hide_edge = MenuItemBuilder::with_id("hide-edge", "隐藏").build(app)?;
             let menu = MenuBuilder::new(app)
                 .items(&[&hide_compact, &hide_edge])
                 .build()?;
             let mut tray_builder = TrayIconBuilder::new();
-            if let Some(icon) = app.default_window_icon() {
-                tray_builder = tray_builder.icon(icon.clone());
-            }
+            tray_builder = tray_builder.icon(tray_icon);
             let _tray = tray_builder
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
