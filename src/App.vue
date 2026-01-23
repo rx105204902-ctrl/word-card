@@ -559,6 +559,18 @@ const setWindowMaxSize = async (size) => {
   }
 };
 
+const setWindowShadow = async (enable) => {
+  const appWindow = getAppWindow();
+  if (!appWindow) {
+    return;
+  }
+  try {
+    await appWindow.setShadow(enable);
+  } catch (error) {
+    console.warn("Failed to update window shadow", error);
+  }
+};
+
 const setWindowPosition = async (position) => {
   const appWindow = getAppWindow();
   if (!appWindow || !position) {
@@ -981,12 +993,14 @@ const applyDesiredMode = async () => {
       nextCompact && hideMode.value === "edge"
         ? new LogicalSize(EDGE_LINE_SIZE.width, EDGE_LINE_SIZE.height)
         : null;
+    const nextShadow = !(nextCompact && hideMode.value === "edge");
     if (nextCompact && hideMode.value === "edge") {
       await updateSnapAnchorToEdge();
     } else {
       await updateSnapAnchorFromWindow();
     }
     isCompact.value = nextCompact;
+    await setWindowShadow(nextShadow);
     await setWindowMinSize(nextMinSize);
     await setWindowMaxSize(nextMaxSize);
     await setWindowSize(nextSize.width, nextSize.height);
