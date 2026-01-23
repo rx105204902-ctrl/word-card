@@ -164,6 +164,7 @@ const COMPACT_SIZE = { width: 150, height: 50 };
 const EDGE_LINE_THICKNESS = 1;
 const EDGE_LINE_SIZE = { width: EDGE_LINE_THICKNESS, height: 80 };
 const EDGE_FRAME_FALLBACK = 5;
+const EDGE_LEFT_NUDGE = 6;
 const FULL_WIDTH_MIN = BASE_FULL_SIZE.width;
 const FULL_WIDTH_MAX = 450;
 const FULL_HEIGHT_RATIO = BASE_FULL_SIZE.height / BASE_FULL_SIZE.width;
@@ -857,14 +858,15 @@ const resolvePositionForAnchor = (anchor, area, size) => {
   let x = minX;
   let y = minY;
   const edgeOffset = Math.max(0, size.width - EDGE_LINE_THICKNESS);
-  const frameInset = Math.max(edgeInsets.value.left, edgeInsetFallback.value);
+  const leftInset = Math.max(edgeInsets.value.left, edgeInsetFallback.value);
+  const rightInset = Math.max(edgeInsets.value.right, edgeInsetFallback.value);
   switch (anchor.kind) {
     case "edge-left":
-      x = edgeBounds.left - edgeOffset - frameInset;
+      x = edgeBounds.left - edgeOffset - leftInset - EDGE_LEFT_NUDGE;
       y = anchor.point.y - size.height / 2;
       break;
     case "edge-right":
-      x = edgeBounds.right - EDGE_LINE_THICKNESS - frameInset;
+      x = edgeBounds.right - EDGE_LINE_THICKNESS - rightInset;
       y = anchor.point.y - size.height / 2;
       break;
     case "top-right":
@@ -885,8 +887,8 @@ const resolvePositionForAnchor = (anchor, area, size) => {
       y = anchor.point.y;
       break;
   }
-  const edgeMinX = edgeBounds.left - edgeOffset - frameInset;
-  const edgeMaxX = edgeBounds.right - EDGE_LINE_THICKNESS - frameInset;
+  const edgeMinX = edgeBounds.left - edgeOffset - leftInset - EDGE_LEFT_NUDGE;
+  const edgeMaxX = edgeBounds.right - EDGE_LINE_THICKNESS - rightInset;
   const clampedX =
     anchor.kind === "edge-left" || anchor.kind === "edge-right"
       ? clamp(x, edgeMinX, edgeMaxX)
@@ -3028,6 +3030,10 @@ onBeforeUnmount(() => {
   height: 100%;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.55);
+}
+
+.app.edge-right .edge-line {
+  box-shadow: -1px 0 0 rgba(255, 255, 255, 0.9);
 }
 
 .compact-shell {
