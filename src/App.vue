@@ -2784,10 +2784,10 @@ onBeforeUnmount(() => {
   background: var(--glass);
   border: 1px solid var(--stroke);
   border-radius: 12px;
-  --icon-size: clamp(20px, 7vw, 24px);
-  --nav-icon-size: clamp(26px, 10vw, 34px);
-  --nav-column: clamp(44px, 16vw, 64px);
-  --tooltip-font: clamp(0.42rem, 1.6vw, 0.52rem);
+  --icon-size: 24px;
+  --nav-icon-size: 34px;
+  --nav-column: 56px;
+  --tooltip-font: 0.42rem;
 }
 
 .app.is-compact {
