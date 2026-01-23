@@ -22,6 +22,15 @@ const REQUIRED_HEADERS: [&str; 7] = [
   "audio_us",
 ];
 const FUZZY_WORD_LIST_NAME: &str = "模糊词词库";
+const DEFAULT_WORD_LIST_NAME: &str = "默认词库";
+const LEGACY_DEFAULT_WORD_LIST_NAME: &str = "四级词库";
+const DEFAULT_WORD_LIST_CSV: &str = include_str!("../file/four_rank.csv");
+
+fn is_system_word_list_name(name: &str) -> bool {
+    name == FUZZY_WORD_LIST_NAME
+        || name == DEFAULT_WORD_LIST_NAME
+        || name == LEGACY_DEFAULT_WORD_LIST_NAME
+}
 
 #[derive(Debug, Deserialize)]
 struct FourRankCsvRecord {
@@ -357,6 +366,74 @@ WHERE study_count IS NOT NULL
     Ok(())
 }
 
+async fn ensure_default_word_list(
+    pool: &SqlitePool,
+    set_active_if_missing: bool,
+) -> Result<i64> {
+    let list_id: Option<i64> = sqlx::query_scalar("SELECT id FROM word_list WHERE name = ?")
+        .bind(DEFAULT_WORD_LIST_NAME)
+        .fetch_optional(pool)
+        .await
+        .context("读取默认词库失败")?;
+    let list_id = match list_id {
+        Some(id) => id,
+        None => {
+            let legacy_id: Option<i64> =
+                sqlx::query_scalar("SELECT id FROM word_list WHERE name = ?")
+                    .bind(LEGACY_DEFAULT_WORD_LIST_NAME)
+                    .fetch_optional(pool)
+                    .await
+                    .context("读取旧默认词库失败")?;
+            if let Some(legacy_id) = legacy_id {
+                sqlx::query("UPDATE word_list SET name = ? WHERE id = ?")
+                    .bind(DEFAULT_WORD_LIST_NAME)
+                    .bind(legacy_id)
+                    .execute(pool)
+                    .await
+                    .context("更新默认词库名称失败")?;
+                legacy_id
+            } else {
+                let result = sqlx::query("INSERT INTO word_list (name) VALUES (?)")
+                    .bind(DEFAULT_WORD_LIST_NAME)
+                    .execute(pool)
+                    .await
+                    .context("创建默认词库失败")?;
+                result.last_insert_rowid()
+            }
+        }
+    };
+
+    let map_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(1) FROM word_list_map WHERE word_list_id = ?")
+            .bind(list_id)
+            .fetch_one(pool)
+            .await
+            .context("读取默认词库单词数量失败")?;
+    if map_count == 0 {
+        import_four_rank_csv_with_pool(pool, DEFAULT_WORD_LIST_CSV, Some(list_id)).await?;
+    }
+
+    if set_active_if_missing {
+        let active: Option<i64> = sqlx::query_scalar(
+            "SELECT active_word_list_id FROM word_list_state WHERE id = 1",
+        )
+        .fetch_optional(pool)
+        .await
+        .context("读取当前词库失败")?;
+        if active.unwrap_or(0) <= 0 {
+            sqlx::query(
+                "UPDATE word_list_state SET active_word_list_id = ?, updated_at = datetime('now') WHERE id = 1",
+            )
+            .bind(list_id)
+            .execute(pool)
+            .await
+            .context("设置默认词库失败")?;
+        }
+    }
+
+    Ok(list_id)
+}
+
 async fn sync_fuzzy_word_list(pool: &SqlitePool) -> Result<()> {
     let fuzzy_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(1) FROM user_word_learning WHERE is_fuzzy = 1",
@@ -462,6 +539,7 @@ pub async fn init_database(app: &tauri::AppHandle) -> Result<()> {
     let pool = open_pool(app).await?;
     ensure_schema(&pool).await?;
     sync_fuzzy_word_list(&pool).await?;
+    ensure_default_word_list(&pool, true).await?;
     Ok(())
 }
 
@@ -469,6 +547,7 @@ pub async fn list_word_lists(app: &tauri::AppHandle) -> Result<Vec<WordListCard>
     let pool = open_pool(app).await?;
     ensure_schema(&pool).await?;
     sync_fuzzy_word_list(&pool).await?;
+    ensure_default_word_list(&pool, false).await?;
 
     let rows = sqlx::query(
         r#"
@@ -501,7 +580,7 @@ ORDER BY is_active DESC, wl.created_at DESC, wl.id DESC
         let is_active: i64 = row
             .try_get("is_active")
             .context("读取词库激活状态失败")?;
-        let is_system = name == FUZZY_WORD_LIST_NAME;
+        let is_system = is_system_word_list_name(&name);
         lists.push(WordListCard {
             id,
             name,
@@ -518,7 +597,7 @@ pub async fn create_word_list(app: &tauri::AppHandle, name: &str) -> Result<i64>
     if trimmed.is_empty() {
         bail!("词库名称不能为空");
     }
-    if trimmed == FUZZY_WORD_LIST_NAME {
+    if is_system_word_list_name(trimmed) {
         bail!("系统词库不可创建");
     }
 
@@ -601,7 +680,7 @@ pub async fn delete_word_list(app: &tauri::AppHandle, word_list_id: i64) -> Resu
     };
 
     let name: String = row.try_get("name").context("读取词库名称失败")?;
-    if name == FUZZY_WORD_LIST_NAME {
+    if is_system_word_list_name(&name) {
         bail!("系统词库不可删除");
     }
 
@@ -629,19 +708,16 @@ pub async fn delete_word_list(app: &tauri::AppHandle, word_list_id: i64) -> Resu
     Ok(())
 }
 
-async fn import_four_rank_csv_internal(
-    app: &tauri::AppHandle,
+async fn import_four_rank_csv_with_pool(
+    pool: &SqlitePool,
     csv_content: &str,
     word_list_id: Option<i64>,
 ) -> Result<ImportSummary> {
-    let pool = open_pool(app).await?;
-    ensure_schema(&pool).await?;
-
     if let Some(list_id) = word_list_id {
         let exists: Option<i64> =
             sqlx::query_scalar("SELECT id FROM word_list WHERE id = ?")
                 .bind(list_id)
-                .fetch_optional(&pool)
+                .fetch_optional(pool)
                 .await
                 .context("检查词库是否存在失败")?;
         if exists.is_none() {
@@ -735,6 +811,16 @@ ON CONFLICT(word) DO UPDATE SET
         upserted,
         skipped,
     })
+}
+
+async fn import_four_rank_csv_internal(
+    app: &tauri::AppHandle,
+    csv_content: &str,
+    word_list_id: Option<i64>,
+) -> Result<ImportSummary> {
+    let pool = open_pool(app).await?;
+    ensure_schema(&pool).await?;
+    import_four_rank_csv_with_pool(&pool, csv_content, word_list_id).await
 }
 
 pub async fn import_four_rank_csv(

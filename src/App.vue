@@ -1844,6 +1844,28 @@ onBeforeUnmount(() => {
           <div class="word-line">
             <span class="word">{{ displayWord }}</span>
             <span v-if="displayPhonetic" class="phonetic">{{ displayPhonetic }}</span>
+            <div v-if="currentWord" class="word-audio">
+              <button
+                class="word-audio-button"
+                type="button"
+                :class="{ 'is-playing': fuzzyAudioPlaying === 'main-uk' }"
+                :disabled="!currentWord.audio_uk"
+                @click="playAudio('main-uk', currentWord.audio_uk)"
+              >
+                英
+                <span class="word-audio-icon">&#x266A;</span>
+              </button>
+              <button
+                class="word-audio-button"
+                type="button"
+                :class="{ 'is-playing': fuzzyAudioPlaying === 'main-us' }"
+                :disabled="!currentWord.audio_us"
+                @click="playAudio('main-us', currentWord.audio_us)"
+              >
+                美
+                <span class="word-audio-icon">&#x266A;</span>
+              </button>
+            </div>
           </div>
 
           <div class="detail-group">
@@ -2071,7 +2093,6 @@ onBeforeUnmount(() => {
             >
               <div v-if="fuzzyWordDetail" class="fuzzy-detail-page">
                 <div class="fuzzy-detail-header">
-                  <span class="fuzzy-detail-title">模糊词</span>
                 </div>
                 <div class="fuzzy-detail-body">
                   <span class="fuzzy-detail-word">{{ fuzzyWordDetail.word }}</span>
@@ -2732,6 +2753,45 @@ onBeforeUnmount(() => {
   letter-spacing: 0.08em;
   color: var(--muted);
   white-space: nowrap;
+}
+
+.word-audio {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.word-audio-button {
+  border-radius: 999px;
+  border: 1px solid rgba(31, 29, 26, 0.08);
+  background: #f4f5f7;
+  font-size: 0.45rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  color: #1f1d1a;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.word-audio-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.word-audio-button.is-playing {
+  border-color: rgba(255, 75, 75, 0.35);
+  box-shadow: 0 4px 10px -8px rgba(255, 75, 75, 0.6);
+}
+
+.word-audio-icon {
+  font-size: 0.48rem;
+  color: #ff4b4b;
+}
+
+.word-audio-button.is-playing .word-audio-icon {
+  animation: fuzzy-audio-pulse 0.9s ease-in-out infinite;
 }
 
 .word-cn {
@@ -3470,14 +3530,6 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.fuzzy-detail-title {
-  font-size: 0.5rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
 }
 
 .fuzzy-detail-word {
