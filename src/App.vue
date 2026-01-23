@@ -160,6 +160,7 @@ const BASE_INNER_SIZE = {
 };
 const COMPACT_SIZE = { width: 150, height: 50 };
 const EDGE_LINE_SIZE = { width: 10, height: 80 };
+const EDGE_LINE_THICKNESS = 2;
 const FULL_WIDTH_MIN = BASE_FULL_SIZE.width;
 const FULL_WIDTH_MAX = 450;
 const FULL_HEIGHT_RATIO = BASE_FULL_SIZE.height / BASE_FULL_SIZE.width;
@@ -769,11 +770,11 @@ const resolvePositionForAnchor = (anchor, area, size) => {
   let y = minY;
   switch (anchor.kind) {
     case "edge-left":
-      x = anchor.point.x;
+      x = area.left - (size.width - EDGE_LINE_THICKNESS);
       y = anchor.point.y - size.height / 2;
       break;
     case "edge-right":
-      x = anchor.point.x - size.width;
+      x = area.right - EDGE_LINE_THICKNESS;
       y = anchor.point.y - size.height / 2;
       break;
     case "top-right":
@@ -794,7 +795,12 @@ const resolvePositionForAnchor = (anchor, area, size) => {
       y = anchor.point.y;
       break;
   }
-  const clampedX = clamp(x, minX, maxX);
+  const edgeMinX = area.left - (size.width - EDGE_LINE_THICKNESS);
+  const edgeMaxX = area.right - EDGE_LINE_THICKNESS;
+  const clampedX =
+    anchor.kind === "edge-left" || anchor.kind === "edge-right"
+      ? clamp(x, edgeMinX, edgeMaxX)
+      : clamp(x, minX, maxX);
   const clampedY = clamp(y, minY, maxY);
   return { x: Math.round(clampedX), y: Math.round(clampedY) };
 };
