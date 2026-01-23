@@ -15,6 +15,8 @@ const isSettings = ref(false);
 const settingsSection = ref("word-bank");
 const hideMode = ref("compact");
 const edgeSide = ref("right");
+const edgeInsets = ref({ left: 0, right: 0, top: 0, bottom: 0 });
+const edgeInsetFallback = ref(0);
 const fullWidth = ref(350);
 const fullWidthDraft = ref(350);
 const uploadFileInput = ref(null);
@@ -161,6 +163,7 @@ const BASE_INNER_SIZE = {
 const COMPACT_SIZE = { width: 150, height: 50 };
 const EDGE_LINE_THICKNESS = 1;
 const EDGE_LINE_SIZE = { width: EDGE_LINE_THICKNESS, height: 80 };
+const EDGE_FRAME_FALLBACK = 5;
 const FULL_WIDTH_MIN = BASE_FULL_SIZE.width;
 const FULL_WIDTH_MAX = 450;
 const FULL_HEIGHT_RATIO = BASE_FULL_SIZE.height / BASE_FULL_SIZE.width;
@@ -679,6 +682,29 @@ const getPhysicalLengthFromLogical = async (length) => {
   }
 };
 
+const refreshEdgeInsets = async () => {
+  const appWindow = getAppWindow();
+  if (!appWindow) {
+    return;
+  }
+  try {
+    const [outerPosition, innerPosition, outerSize, innerSize] =
+      await Promise.all([
+        appWindow.outerPosition(),
+        appWindow.innerPosition(),
+        appWindow.outerSize(),
+        appWindow.innerSize(),
+      ]);
+    const left = Math.max(0, innerPosition.x - outerPosition.x);
+    const top = Math.max(0, innerPosition.y - outerPosition.y);
+    const right = Math.max(0, outerSize.width - innerSize.width - left);
+    const bottom = Math.max(0, outerSize.height - innerSize.height - top);
+    edgeInsets.value = { left, right, top, bottom };
+  } catch (error) {
+    console.warn("Failed to resolve window insets", error);
+  }
+};
+
 const getSnapBounds = (area, size) => {
   const minX = area.left;
   const minY = area.top;
@@ -819,13 +845,14 @@ const resolvePositionForAnchor = (anchor, area, size) => {
   let x = minX;
   let y = minY;
   const edgeOffset = Math.max(0, size.width - EDGE_LINE_THICKNESS);
+  const frameInset = Math.max(edgeInsets.value.left, edgeInsetFallback.value);
   switch (anchor.kind) {
     case "edge-left":
-      x = edgeBounds.left - edgeOffset;
+      x = edgeBounds.left - edgeOffset - frameInset;
       y = anchor.point.y - size.height / 2;
       break;
     case "edge-right":
-      x = edgeBounds.right - EDGE_LINE_THICKNESS;
+      x = edgeBounds.right - EDGE_LINE_THICKNESS - frameInset;
       y = anchor.point.y - size.height / 2;
       break;
     case "top-right":
@@ -846,8 +873,8 @@ const resolvePositionForAnchor = (anchor, area, size) => {
       y = anchor.point.y;
       break;
   }
-  const edgeMinX = edgeBounds.left - edgeOffset;
-  const edgeMaxX = edgeBounds.right - EDGE_LINE_THICKNESS;
+  const edgeMinX = edgeBounds.left - edgeOffset - frameInset;
+  const edgeMaxX = edgeBounds.right - EDGE_LINE_THICKNESS - frameInset;
   const clampedX =
     anchor.kind === "edge-left" || anchor.kind === "edge-right"
       ? clamp(x, edgeMinX, edgeMaxX)
@@ -963,6 +990,9 @@ const applyDesiredMode = async () => {
     await setWindowMinSize(nextMinSize);
     await setWindowMaxSize(nextMaxSize);
     await setWindowSize(nextSize.width, nextSize.height);
+    if (nextCompact && hideMode.value === "edge") {
+      await refreshEdgeInsets();
+    }
     await positionWindowForAnchor(nextSize);
     if (desiredCompact === nextCompact) {
       break;
@@ -1965,6 +1995,8 @@ const updateCompactFromCursor = async () => {
 onMounted(async () => {
   void setWindowResizable(false);
   void setWindowMaximizable(false);
+  const fallback = await getPhysicalLengthFromLogical(EDGE_FRAME_FALLBACK);
+  edgeInsetFallback.value = fallback ?? EDGE_FRAME_FALLBACK;
   desiredCompact = true;
   await applyDesiredMode();
   await refreshWordBank();
