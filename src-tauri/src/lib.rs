@@ -1,7 +1,11 @@
 mod file_upload;
 mod word_bank;
 
-use tauri::{Manager, tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}};
+use tauri::{
+    Manager,
+    menu::{MenuBuilder, MenuItemBuilder},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+};
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -214,11 +218,26 @@ pub fn run() {
             if let Err(error) = tauri::async_runtime::block_on(word_bank::init_database(&app.handle())) {
                 eprintln!("Failed to initialize database: {error}");
             }
+            let hide_compact = MenuItemBuilder::with_id("hide-compact", "缩小化").build(app)?;
+            let hide_edge = MenuItemBuilder::with_id("hide-edge", "隐藏").build(app)?;
+            let menu = MenuBuilder::new(app)
+                .items(&[&hide_compact, &hide_edge])
+                .build()?;
             let mut tray_builder = TrayIconBuilder::new();
             if let Some(icon) = app.default_window_icon() {
                 tray_builder = tray_builder.icon(icon.clone());
             }
             let _tray = tray_builder
+                .menu(&menu)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "hide-compact" => {
+                        let _ = app.emit("hide-mode-change", "compact");
+                    }
+                    "hide-edge" => {
+                        let _ = app.emit("hide-mode-change", "edge");
+                    }
+                    _ => (),
+                })
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,

@@ -36,3 +36,10 @@ The app SHALL provide a minimize button to the left of the settings button in th
 #### Scenario: Restore from tray
 - **WHEN** the user clicks the tray icon
 - **THEN** the app window becomes visible and focused
+
+### Requirement: Tray hide mode menu
+The system tray icon SHALL provide a context menu with two hide mode options: Minimize and Hide. Selecting an option SHALL update the app hide behavior accordingly.
+
+#### Scenario: Change hide mode from tray
+- **WHEN** the user right-clicks the tray icon and selects a hide mode option
+- **THEN** the app uses the selected hide mode for mouse-leave behavior

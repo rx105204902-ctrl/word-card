@@ -8,6 +8,7 @@ import {
 } from "@tauri-apps/api/window";
 import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 const isCompact = ref(true);
 const isSettings = ref(false);
@@ -181,6 +182,7 @@ let cachedWindow = null;
 let isRepositioning = false;
 let unlistenMove = null;
 let unlistenFocus = null;
+let unlistenHideMode = null;
 let cursorPollTimer = null;
 let snapAnchor = null;
 let snapInFlight = false;
@@ -984,6 +986,14 @@ const syncHideMode = () => {
   if (desiredCompact) {
     void applyDesiredMode();
   }
+};
+
+const applyHideMode = (mode) => {
+  if (mode !== "compact" && mode !== "edge") {
+    return;
+  }
+  hideMode.value = mode;
+  syncHideMode();
 };
 
 const minimizeToTray = async () => {
@@ -1897,6 +1907,9 @@ onMounted(async () => {
       }
     });
   }
+  unlistenHideMode = await listen("hide-mode-change", (event) => {
+    applyHideMode(event.payload);
+  });
   cursorPollTimer = window.setInterval(
     updateCompactFromCursor,
     CURSOR_POLL_INTERVAL_MS
@@ -1910,6 +1923,9 @@ onBeforeUnmount(() => {
   }
   if (unlistenFocus) {
     unlistenFocus();
+  }
+  if (unlistenHideMode) {
+    unlistenHideMode();
   }
   if (cursorPollTimer) {
     window.clearInterval(cursorPollTimer);
