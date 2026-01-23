@@ -224,7 +224,7 @@ pub fn run() {
             let menu = MenuBuilder::new(app)
                 .items(&[&hide_compact, &hide_edge])
                 .build()?;
-            let mut tray_builder = TrayIconBuilder::new();
+            let mut tray_builder = TrayIconBuilder::new().tooltip("word-card");
             if let Some(icon) = app.default_window_icon() {
                 tray_builder = tray_builder.icon(icon.clone());
             }
@@ -257,10 +257,10 @@ pub fn run() {
                         } => {
                             show_window();
                         }
-                        TrayIconEvent::Enter { .. } | TrayIconEvent::Move { .. } => {
-                            if window.is_visible().ok() == Some(false) {
-                                show_window();
-                            }
+                        TrayIconEvent::DoubleClick { .. }
+                        | TrayIconEvent::Enter { .. }
+                        | TrayIconEvent::Move { .. } => {
+                            show_window();
                         }
                         _ => {}
                     }
