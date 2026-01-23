@@ -1,5 +1,5 @@
 ﻿<script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   cursorPosition,
   currentMonitor,
@@ -14,6 +14,7 @@ const isSettings = ref(false);
 const settingsSection = ref("word-bank");
 const hideMode = ref("compact");
 const fullWidth = ref(350);
+const fullWidthDraft = ref(350);
 const uploadFileInput = ref(null);
 const uploads = ref([]);
 const importNotice = ref("");
@@ -196,7 +197,9 @@ const canConfirmImportDialog = computed(() => {
   return newWordListName.value.trim().length > 0;
 });
 const fullSize = computed(() => {
-  const width = Math.round(clamp(fullWidth.value, FULL_WIDTH_MIN, FULL_WIDTH_MAX));
+  const width = Math.round(
+    clamp(fullWidth.value, FULL_WIDTH_MIN, FULL_WIDTH_MAX)
+  );
   return {
     width,
     height: Math.round(width * FULL_HEIGHT_RATIO),
@@ -204,6 +207,18 @@ const fullSize = computed(() => {
 });
 const fullSizeLabel = computed(
   () => `${fullSize.value.width}px x ${fullSize.value.height}px`
+);
+const fullSizeDraft = computed(() => {
+  const width = Math.round(
+    clamp(fullWidthDraft.value, FULL_WIDTH_MIN, FULL_WIDTH_MAX)
+  );
+  return {
+    width,
+    height: Math.round(width * FULL_HEIGHT_RATIO),
+  };
+});
+const fullSizeDraftLabel = computed(
+  () => `${fullSizeDraft.value.width}px x ${fullSizeDraft.value.height}px`
 );
 const uiScale = computed(() => {
   const innerWidth = Math.max(1, fullSize.value.width - APP_PADDING * 2);
@@ -219,6 +234,12 @@ const uiScaleStyle = computed(() => ({
   "--ui-base-width": `${BASE_INNER_SIZE.width}px`,
   "--ui-base-height": `${BASE_INNER_SIZE.height}px`,
 }));
+
+watch(fullWidth, (value) => {
+  if (fullWidthDraft.value !== value) {
+    fullWidthDraft.value = value;
+  }
+});
 const dailyStudyCountMap = computed(() => {
   const map = {};
   studyCalendarCounts.value.forEach((item) => {
@@ -952,6 +973,11 @@ const syncFullWidth = () => {
     fullWidth.value = clamped;
   }
   void applyDesiredMode();
+};
+
+const applyFullWidth = () => {
+  fullWidth.value = fullWidthDraft.value;
+  syncFullWidth();
 };
 
 const syncHideMode = () => {
@@ -2644,14 +2670,14 @@ onBeforeUnmount(() => {
                 <p class="settings-more-label">全尺寸窗口宽度</p>
                 <div class="settings-more-slider">
                   <input
-                    v-model.number="fullWidth"
+                    v-model.number="fullWidthDraft"
                     type="range"
                     :min="FULL_WIDTH_MIN"
                     :max="FULL_WIDTH_MAX"
                     step="1"
-                    @input="syncFullWidth"
+                    @change="applyFullWidth"
                   />
-                  <span class="settings-more-value">{{ fullSizeLabel }}</span>
+                  <span class="settings-more-value">{{ fullSizeDraftLabel }}</span>
                 </div>
                 <p class="settings-more-hint">
                   最大宽度 450px，按当前比例自动调整高度。
@@ -2680,7 +2706,7 @@ onBeforeUnmount(() => {
                     value="compact"
                     @change="syncHideMode"
                   />
-                  <span>鼠标移出后变成小窗口</span>
+                  <span>缩小化</span>
                 </label>
                 <label class="settings-more-option">
                   <input
@@ -2689,11 +2715,8 @@ onBeforeUnmount(() => {
                     value="edge"
                     @change="syncHideMode"
                   />
-                  <span>鼠标移出后隐藏在屏幕边框，仅留白线</span>
+                  <span>隐藏</span>
                 </label>
-                <p class="settings-more-hint">
-                  鼠标靠近白线时恢复大窗口。
-                </p>
               </div>
             </div>
             <p v-else class="settings-placeholder">该模块正在完善中。</p>

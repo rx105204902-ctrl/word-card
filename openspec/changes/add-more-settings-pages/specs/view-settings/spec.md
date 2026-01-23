@@ -7,18 +7,18 @@ The settings view SHALL include a "More" subpage that lists two buttons: "Window
 - **THEN** both buttons are visible
 
 ### Requirement: Window size adjustment settings
-The settings view SHALL provide a Window Size Adjustment subpage that controls the full window width between 350px and 450px while keeping the current aspect ratio.
+The settings view SHALL provide a Window Size Adjustment subpage that controls the full window width between 350px and 450px while keeping the current aspect ratio. The window size SHALL update only after the user releases the width control.
 
 #### Scenario: Display size controls
 - **WHEN** the Window Size Adjustment subpage is displayed
 - **THEN** the width control and current size preview are visible
 
 #### Scenario: Adjust full window width
-- **WHEN** the user changes the width control
+- **WHEN** the user releases the width control
 - **THEN** the full window size updates and the height follows the existing ratio
 
 ### Requirement: Hide mode settings
-The settings view SHALL provide a Hide Mode subpage with two options: Compact and Edge Line.
+The settings view SHALL provide a Hide Mode subpage with two options: Minimize and Hide.
 
 #### Scenario: Display hide mode options
 - **WHEN** the Hide Mode subpage is displayed
