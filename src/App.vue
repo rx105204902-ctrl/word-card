@@ -544,6 +544,18 @@ const setWindowMinSize = async (size) => {
   }
 };
 
+const setWindowMaxSize = async (size) => {
+  const appWindow = getAppWindow();
+  if (!appWindow) {
+    return;
+  }
+  try {
+    await appWindow.setMaxSize(size);
+  } catch (error) {
+    console.warn("Failed to update maximum window size", error);
+  }
+};
+
 const setWindowPosition = async (position) => {
   const appWindow = getAppWindow();
   if (!appWindow || !position) {
@@ -938,6 +950,10 @@ const applyDesiredMode = async () => {
       nextCompact && hideMode.value === "edge"
         ? new LogicalSize(EDGE_LINE_SIZE.width, EDGE_LINE_SIZE.height)
         : null;
+    const nextMaxSize =
+      nextCompact && hideMode.value === "edge"
+        ? new LogicalSize(EDGE_LINE_SIZE.width, EDGE_LINE_SIZE.height)
+        : null;
     if (nextCompact && hideMode.value === "edge") {
       await updateSnapAnchorToEdge();
     } else {
@@ -945,6 +961,7 @@ const applyDesiredMode = async () => {
     }
     isCompact.value = nextCompact;
     await setWindowMinSize(nextMinSize);
+    await setWindowMaxSize(nextMaxSize);
     await setWindowSize(nextSize.width, nextSize.height);
     await positionWindowForAnchor(nextSize);
     if (desiredCompact === nextCompact) {
@@ -2238,8 +2255,8 @@ onBeforeUnmount(() => {
               @mousedown.stop
               @mouseenter="showTooltip"
               @mouseleave="hideTooltip"
-              aria-label="鏇村"
-              data-tooltip="鏇村"
+              aria-label="更多"
+              data-tooltip="更多"
               data-tooltip-position="right"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
@@ -2663,9 +2680,9 @@ onBeforeUnmount(() => {
                           @click="retryUpload(item.id)"
                           @mouseenter="showTooltip"
                           @mouseleave="hideTooltip"
-                          data-tooltip="閲嶆柊涓婁紶"
+                          data-tooltip="重新上传"
                         >
-                          閲嶆柊涓婁紶
+                          重新上传
                         </button>
                         <button
                           class="upload-action upload-delete"
