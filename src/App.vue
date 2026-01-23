@@ -14,6 +14,7 @@ const isCompact = ref(true);
 const isSettings = ref(false);
 const settingsSection = ref("word-bank");
 const hideMode = ref("compact");
+const edgeSide = ref("right");
 const fullWidth = ref(350);
 const fullWidthDraft = ref(350);
 const uploadFileInput = ref(null);
@@ -741,6 +742,7 @@ const updateSnapAnchorToEdge = async () => {
     x: isLeft ? area.left : area.right,
     y: rect.centerY,
   };
+  edgeSide.value = isLeft ? "left" : "right";
   snapAnchor = { kind, point };
   return snapAnchor;
 };
@@ -1945,7 +1947,12 @@ onBeforeUnmount(() => {
 <template>
   <div
     class="app"
-    :class="{ 'is-compact': isCompact, 'is-edge-hidden': isEdgeHidden }"
+    :class="{
+      'is-compact': isCompact,
+      'is-edge-hidden': isEdgeHidden,
+      'edge-left': edgeSide === 'left',
+      'edge-right': edgeSide === 'right',
+    }"
     @mouseleave="handleMouseLeaveApp"
   >
     <div v-if="isCompact" class="view view-compact">
@@ -2886,17 +2893,25 @@ onBeforeUnmount(() => {
 .edge-shell {
   height: 100%;
   width: 100%;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
   cursor: pointer;
+}
+
+.app.edge-left .edge-shell {
+  justify-content: flex-start;
+}
+
+.app.edge-right .edge-shell {
+  justify-content: flex-end;
 }
 
 .edge-line {
   width: 2px;
   height: 100%;
   border-radius: 999px;
-  background: #ffffff;
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.75);
 }
 
 .compact-shell {
