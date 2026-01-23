@@ -159,7 +159,7 @@ const BASE_INNER_SIZE = {
   height: BASE_FULL_SIZE.height - APP_PADDING * 2,
 };
 const COMPACT_SIZE = { width: 150, height: 50 };
-const EDGE_LINE_THICKNESS = 2;
+const EDGE_LINE_THICKNESS = 1;
 const EDGE_LINE_SIZE = { width: EDGE_LINE_THICKNESS, height: 80 };
 const FULL_WIDTH_MIN = BASE_FULL_SIZE.width;
 const FULL_WIDTH_MAX = 450;
@@ -572,6 +572,30 @@ const getWorkAreaRect = async () => {
   };
 };
 
+const getMonitorRect = async () => {
+  const monitor = (await currentMonitor()) ?? (await primaryMonitor());
+  if (!monitor) {
+    return null;
+  }
+  const position = monitor.position;
+  const size = monitor.size;
+  if (!position || !size) {
+    return null;
+  }
+  const left = position.x;
+  const top = position.y;
+  const right = position.x + size.width;
+  const bottom = position.y + size.height;
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: size.width,
+    height: size.height,
+  };
+};
+
 const getWindowRect = async () => {
   const appWindow = getAppWindow();
   if (!appWindow) {
@@ -730,21 +754,22 @@ const updateSnapAnchorFromWindow = async () => {
 };
 
 const updateSnapAnchorToEdge = async () => {
-  const [area, rect] = await Promise.all([
+  const [area, rect, monitorRect] = await Promise.all([
     getWorkAreaRect(),
     getWindowRect(),
+    getMonitorRect(),
   ]);
-  if (!area || !rect) {
+  if (!area || !rect || !monitorRect) {
     return null;
   }
   const isLeft = rect.centerX <= area.left + area.width / 2;
   const kind = isLeft ? "edge-left" : "edge-right";
   const point = {
-    x: isLeft ? area.left : area.right,
+    x: isLeft ? monitorRect.left : monitorRect.right,
     y: rect.centerY,
   };
   edgeSide.value = isLeft ? "left" : "right";
-  snapAnchor = { kind, point };
+  snapAnchor = { kind, point, edgeBounds: monitorRect };
   return snapAnchor;
 };
 
@@ -765,16 +790,17 @@ const continueUpload = () => {
 };
 
 const resolvePositionForAnchor = (anchor, area, size) => {
+  const edgeBounds = anchor.edgeBounds ?? area;
   const { minX, minY, maxX, maxY } = getSnapBounds(area, size);
   let x = minX;
   let y = minY;
   switch (anchor.kind) {
     case "edge-left":
-      x = area.left;
+      x = edgeBounds.left;
       y = anchor.point.y - size.height / 2;
       break;
     case "edge-right":
-      x = area.right - size.width;
+      x = edgeBounds.right - size.width;
       y = anchor.point.y - size.height / 2;
       break;
     case "top-right":
@@ -795,7 +821,12 @@ const resolvePositionForAnchor = (anchor, area, size) => {
       y = anchor.point.y;
       break;
   }
-  const clampedX = clamp(x, minX, maxX);
+  const edgeMinX = edgeBounds.left;
+  const edgeMaxX = edgeBounds.right - size.width;
+  const clampedX =
+    anchor.kind === "edge-left" || anchor.kind === "edge-right"
+      ? clamp(x, edgeMinX, edgeMaxX)
+      : clamp(x, minX, maxX);
   const clampedY = clamp(y, minY, maxY);
   return { x: Math.round(clampedX), y: Math.round(clampedY) };
 };
@@ -2909,10 +2940,10 @@ onBeforeUnmount(() => {
 }
 
 .edge-line {
-  width: 2px;
+  width: 100%;
   height: 100%;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.55);
 }
 
 .compact-shell {
