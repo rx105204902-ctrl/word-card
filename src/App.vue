@@ -997,7 +997,7 @@ const applyDesiredMode = async () => {
         ? new LogicalSize(EDGE_LINE_SIZE.width, EDGE_LINE_SIZE.height)
         : null;
     const nextShadow = !(nextCompact && hideMode.value === "edge");
-    if (nextCompact && hideMode.value === "edge") {
+    if (hideMode.value === "edge") {
       await updateSnapAnchorToEdge();
     } else {
       await updateSnapAnchorFromWindow();
