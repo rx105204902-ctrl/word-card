@@ -905,6 +905,7 @@ const setSettingsSection = (section) => {
     void refreshWordBank();
   }
   if (section === "fuzzy-words") {
+    fuzzyWordDetailId.value = null;
     void refreshFuzzyWords();
   }
   if (section === "study-calendar") {
@@ -1898,10 +1899,7 @@ onBeforeUnmount(() => {
           </button>
           <span class="settings-title">设置</span>
         </header>
-        <div
-          class="settings-body"
-          :class="{ 'is-fuzzy-detail': Boolean(fuzzyWordDetail) }"
-        >
+        <div class="settings-body">
           <nav class="settings-nav" aria-label="设置导航">
             <button
               class="settings-nav-item icon-button"
@@ -2886,13 +2884,6 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.settings-body.is-fuzzy-detail {
-  grid-template-columns: 1fr;
-}
-
-.settings-body.is-fuzzy-detail .settings-nav {
-  display: none;
-}
 
 .settings-nav {
   display: grid;
