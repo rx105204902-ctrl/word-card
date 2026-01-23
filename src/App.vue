@@ -12,6 +12,8 @@ import { invoke } from "@tauri-apps/api/core";
 const isCompact = ref(true);
 const isSettings = ref(false);
 const settingsSection = ref("word-bank");
+const hideMode = ref("compact");
+const fullWidth = ref(350);
 const uploadFileInput = ref(null);
 const uploads = ref([]);
 const importNotice = ref("");
@@ -120,6 +122,9 @@ const isFuzzyAllSelected = computed(
   () =>
     hasFuzzyWords.value && fuzzySelectedIds.value.length === fuzzyWords.value.length
 );
+const isEdgeHidden = computed(
+  () => isCompact.value && hideMode.value === "edge"
+);
 const fuzzyWordDetail = computed(
   () =>
     fuzzyWords.value.find((item) => item.id === fuzzyWordDetailId.value) ??
@@ -144,8 +149,12 @@ const tooltip = ref({
 let desiredCompact = true;
 let resizeInFlight = false;
 
-const FULL_SIZE = { width: 350, height: 155 };
+const BASE_FULL_SIZE = { width: 350, height: 155 };
 const COMPACT_SIZE = { width: 150, height: 50 };
+const EDGE_LINE_SIZE = { width: 10, height: 80 };
+const FULL_WIDTH_MIN = BASE_FULL_SIZE.width;
+const FULL_WIDTH_MAX = 450;
+const FULL_HEIGHT_RATIO = BASE_FULL_SIZE.height / BASE_FULL_SIZE.width;
 const CURSOR_POLL_INTERVAL_MS = 120;
 const SNAP_THRESHOLD = 16;
 const SNAP_DEBOUNCE_MS = 120;
@@ -181,6 +190,16 @@ const canConfirmImportDialog = computed(() => {
   }
   return newWordListName.value.trim().length > 0;
 });
+const fullSize = computed(() => {
+  const width = Math.round(clamp(fullWidth.value, FULL_WIDTH_MIN, FULL_WIDTH_MAX));
+  return {
+    width,
+    height: Math.round(width * FULL_HEIGHT_RATIO),
+  };
+});
+const fullSizeLabel = computed(
+  () => `${fullSize.value.width}px x ${fullSize.value.height}px`
+);
 const dailyStudyCountMap = computed(() => {
   const map = {};
   studyCalendarCounts.value.forEach((item) => {
@@ -666,6 +685,27 @@ const updateSnapAnchorFromWindow = async () => {
   return updateSnapAnchor(area, rect);
 };
 
+const updateSnapAnchorToEdge = async () => {
+  const [area, rect] = await Promise.all([
+    getWorkAreaRect(),
+    getWindowRect(),
+  ]);
+  if (!area || !rect) {
+    return null;
+  }
+  const kind = resolveCornerKind(area, rect);
+  let point = { x: area.left, y: area.top };
+  if (kind === "top-right") {
+    point = { x: area.right, y: area.top };
+  } else if (kind === "bottom-left") {
+    point = { x: area.left, y: area.bottom };
+  } else if (kind === "bottom-right") {
+    point = { x: area.right, y: area.bottom };
+  }
+  snapAnchor = { kind, point };
+  return snapAnchor;
+};
+
 const openUploadPicker = () => {
   if (!uploadFileInput.value) {
     return;
@@ -779,6 +819,16 @@ const positionWindowForAnchor = async (nextSize) => {
   }
 };
 
+const resolveCompactSize = () => {
+  if (hideMode.value === "edge") {
+    return {
+      width: EDGE_LINE_SIZE.width,
+      height: EDGE_LINE_SIZE.height,
+    };
+  }
+  return COMPACT_SIZE;
+};
+
 const applyDesiredMode = async () => {
   if (resizeInFlight) {
     return;
@@ -786,8 +836,12 @@ const applyDesiredMode = async () => {
   resizeInFlight = true;
   while (true) {
     const nextCompact = desiredCompact;
-    const nextSize = nextCompact ? COMPACT_SIZE : FULL_SIZE;
-    await updateSnapAnchorFromWindow();
+    const nextSize = nextCompact ? resolveCompactSize() : fullSize.value;
+    if (nextCompact && hideMode.value === "edge") {
+      await updateSnapAnchorToEdge();
+    } else {
+      await updateSnapAnchorFromWindow();
+    }
     isCompact.value = nextCompact;
     await setWindowSize(nextSize.width, nextSize.height);
     await positionWindowForAnchor(nextSize);
@@ -871,6 +925,28 @@ const enterCompact = () => {
 
 const exitCompact = () => {
   requestCompactMode(false);
+};
+
+const syncFullWidth = () => {
+  const clamped = Math.round(clamp(fullWidth.value, FULL_WIDTH_MIN, FULL_WIDTH_MAX));
+  if (clamped !== fullWidth.value) {
+    fullWidth.value = clamped;
+  }
+  void applyDesiredMode();
+};
+
+const syncHideMode = () => {
+  if (desiredCompact) {
+    void applyDesiredMode();
+  }
+};
+
+const minimizeToTray = async () => {
+  try {
+    await invoke("hide_main_window");
+  } catch (error) {
+    console.warn("Failed to hide window to tray", error);
+  }
 };
 
 const handleMouseLeaveApp = () => {
@@ -1803,11 +1879,19 @@ onBeforeUnmount(() => {
 <template>
   <div
     class="app"
-    :class="{ 'is-compact': isCompact }"
+    :class="{ 'is-compact': isCompact, 'is-edge-hidden': isEdgeHidden }"
     @mouseleave="handleMouseLeaveApp"
   >
     <div v-if="isCompact" class="view view-compact">
-      <div class="compact-shell" @mousedown="handleDragStart">
+      <div
+        v-if="isEdgeHidden"
+        class="edge-shell"
+        @mousedown="handleDragStart"
+        @mouseenter="exitCompact"
+      >
+        <span class="edge-line" aria-hidden="true"></span>
+      </div>
+      <div v-else class="compact-shell" @mousedown="handleDragStart">
         <span class="word word-compact">{{ displayWord }}</span>
       </div>
     </div>
@@ -1820,24 +1904,37 @@ onBeforeUnmount(() => {
             :class="`level-${proficiencyLevel}`"
             :aria-label="proficiencyLabel"
           ></div>
-          <button
-            class="settings-button icon-button"
-            type="button"
-            aria-label="设置"
-            @click="openSettings"
-            @mousedown.stop
-          >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              focusable="false"
+          <div class="top-actions">
+            <button
+              class="settings-button icon-button minimize-button"
+              type="button"
+              aria-label="最小化到托盘"
+              @click="minimizeToTray"
+              @mousedown.stop
             >
-              <circle cx="12" cy="12" r="3.5" />
-              <path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" />
-              <path d="M4.7 4.7l2.1 2.1M17.2 17.2l2.1 2.1" />
-              <path d="M19.3 4.7l-2.1 2.1M6.8 17.2l-2.1 2.1" />
-            </svg>
-          </button>
+              <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+                <path d="M6 12h12" />
+              </svg>
+            </button>
+            <button
+              class="settings-button icon-button"
+              type="button"
+              aria-label="设置"
+              @click="openSettings"
+              @mousedown.stop
+            >
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                focusable="false"
+              >
+                <circle cx="12" cy="12" r="3.5" />
+                <path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" />
+                <path d="M4.7 4.7l2.1 2.1M17.2 17.2l2.1 2.1" />
+                <path d="M19.3 4.7l-2.1 2.1M6.8 17.2l-2.1 2.1" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <template v-if="!showEmptyState">
@@ -2491,7 +2588,94 @@ onBeforeUnmount(() => {
                 </button>
               </div>
             </div>
-            <div v-else-if="settingsSection === 'more'" class="settings-more"></div>
+            <div v-else-if="settingsSection === 'more'" class="settings-more">
+              <button
+                class="settings-more-item"
+                type="button"
+                @click="setSettingsSection('more-window-size')"
+              >
+                <span>窗口大小调整</span>
+                <span class="settings-more-arrow">></span>
+              </button>
+              <button
+                class="settings-more-item"
+                type="button"
+                @click="setSettingsSection('more-hide-mode')"
+              >
+                <span>隐藏方式</span>
+                <span class="settings-more-arrow">></span>
+              </button>
+            </div>
+            <div
+              v-else-if="settingsSection === 'more-window-size'"
+              class="settings-more-detail"
+            >
+              <div class="settings-more-header">
+                <button
+                  class="settings-more-back"
+                  type="button"
+                  @click="setSettingsSection('more')"
+                >
+                  返回
+                </button>
+                <span class="settings-more-title">窗口大小调整</span>
+              </div>
+              <div class="settings-more-card">
+                <p class="settings-more-label">全尺寸窗口宽度</p>
+                <div class="settings-more-slider">
+                  <input
+                    v-model.number="fullWidth"
+                    type="range"
+                    :min="FULL_WIDTH_MIN"
+                    :max="FULL_WIDTH_MAX"
+                    step="1"
+                    @input="syncFullWidth"
+                  />
+                  <span class="settings-more-value">{{ fullSizeLabel }}</span>
+                </div>
+                <p class="settings-more-hint">
+                  最大宽度 450px，按当前比例自动调整高度。
+                </p>
+              </div>
+            </div>
+            <div
+              v-else-if="settingsSection === 'more-hide-mode'"
+              class="settings-more-detail"
+            >
+              <div class="settings-more-header">
+                <button
+                  class="settings-more-back"
+                  type="button"
+                  @click="setSettingsSection('more')"
+                >
+                  返回
+                </button>
+                <span class="settings-more-title">隐藏方式</span>
+              </div>
+              <div class="settings-more-card">
+                <label class="settings-more-option">
+                  <input
+                    v-model="hideMode"
+                    type="radio"
+                    value="compact"
+                    @change="syncHideMode"
+                  />
+                  <span>鼠标移出后变成小窗口</span>
+                </label>
+                <label class="settings-more-option">
+                  <input
+                    v-model="hideMode"
+                    type="radio"
+                    value="edge"
+                    @change="syncHideMode"
+                  />
+                  <span>鼠标移出后隐藏在屏幕边框，仅留白线</span>
+                </label>
+                <p class="settings-more-hint">
+                  鼠标靠近白线时恢复大窗口。
+                </p>
+              </div>
+            </div>
             <p v-else class="settings-placeholder">该模块正在完善中。</p>
           </div>
         </div>
@@ -2602,6 +2786,13 @@ onBeforeUnmount(() => {
   padding: 0;
 }
 
+.app.is-edge-hidden {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .view {
   display: grid;
   height: 100%;
@@ -2616,6 +2807,22 @@ onBeforeUnmount(() => {
 
 .view-compact {
   height: 100%;
+}
+
+.edge-shell {
+  height: 100%;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.edge-line {
+  width: 2px;
+  height: 100%;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.7);
 }
 
 .compact-shell {
@@ -2654,6 +2861,12 @@ onBeforeUnmount(() => {
   cursor: grab;
 }
 
+.top-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .top-row:active {
   cursor: grabbing;
 }
@@ -2685,6 +2898,10 @@ onBeforeUnmount(() => {
   box-shadow: 0 8px 12px -14px var(--shadow);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   --icon-glyph-size: calc(var(--icon-size) * 0.62);
+}
+
+.minimize-button {
+  --icon-glyph-size: calc(var(--icon-size) * 0.5);
 }
 
 .icon-button {
@@ -3223,6 +3440,109 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 6px;
   align-content: start;
+}
+
+.settings-more-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.75);
+  font-size: 0.55rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #1f1d1a;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 8px 12px -14px var(--shadow);
+}
+
+.settings-more-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 14px -14px var(--shadow);
+}
+
+.settings-more-arrow {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.settings-more-detail {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.settings-more-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-more-back {
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.5rem;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.settings-more-title {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-more-card {
+  border-radius: 12px;
+  border: 1px solid var(--stroke);
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.7);
+  display: grid;
+  gap: 8px;
+}
+
+.settings-more-label {
+  margin: 0;
+  font-size: 0.54rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.settings-more-slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-more-slider input[type="range"] {
+  flex: 1;
+}
+
+.settings-more-value {
+  min-width: 86px;
+  text-align: right;
+  font-size: 0.5rem;
+  color: var(--muted);
+}
+
+.settings-more-option {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 0.54rem;
+  color: #1f1d1a;
+}
+
+.settings-more-hint {
+  margin: 0;
+  font-size: 0.5rem;
+  color: var(--muted);
 }
 
 .word-bank-panel {
