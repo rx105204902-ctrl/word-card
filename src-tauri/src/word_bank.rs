@@ -57,6 +57,8 @@ pub struct FuzzyWordItem {
     pub part_of_speech_and_meanings: Option<String>,
     pub example_sentence: Option<String>,
     pub example_translation: Option<String>,
+    pub audio_uk: Option<String>,
+    pub audio_us: Option<String>,
     pub fuzzy_marked_at: Option<String>,
 }
 
@@ -1114,6 +1116,8 @@ SELECT
   w.part_of_speech_and_meanings AS part_of_speech_and_meanings,
   w.example_sentence AS example_sentence,
   w.example_translation AS example_translation,
+  w.audio_uk AS audio_uk,
+  w.audio_us AS audio_us,
   uwl.fuzzy_marked_at AS fuzzy_marked_at
 FROM word w
 JOIN user_word_learning uwl ON w.id = uwl.word_id
@@ -1141,6 +1145,8 @@ ORDER BY {order_by}
             example_translation: row
                 .try_get("example_translation")
                 .context("读取例句释义失败")?,
+            audio_uk: row.try_get("audio_uk").context("读取英式发音失败")?,
+            audio_us: row.try_get("audio_us").context("读取美式发音失败")?,
             fuzzy_marked_at: row
                 .try_get("fuzzy_marked_at")
                 .context("读取模糊标记时间失败")?,

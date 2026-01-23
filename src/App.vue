@@ -169,6 +169,7 @@ let cursorPollTimer = null;
 let snapAnchor = null;
 let snapInFlight = false;
 let snapDebounceTimer = null;
+let audioPlayer = null;
 
 const canImport = computed(
   () => hasCompletedUploads.value && !importBusy.value
@@ -896,6 +897,9 @@ const setSettingsSection = (section) => {
   if (section !== "import" && !importBusy.value) {
     importDialogVisible.value = false;
   }
+  if (section !== "fuzzy-words") {
+    fuzzyWordDetailId.value = null;
+  }
   hideTooltip();
   if (section === "word-bank") {
     void refreshWordBank();
@@ -1291,6 +1295,19 @@ const openFuzzyWordDetail = (word) => {
 
 const closeFuzzyWordDetail = () => {
   fuzzyWordDetailId.value = null;
+};
+
+const playAudio = (url) => {
+  if (!url) {
+    return;
+  }
+  if (audioPlayer) {
+    audioPlayer.pause();
+    audioPlayer = null;
+  }
+  const player = new Audio(url);
+  audioPlayer = player;
+  player.play().catch(() => {});
 };
 
 const clearFuzzyMarks = async (wordIds) => {
@@ -1755,6 +1772,10 @@ onBeforeUnmount(() => {
   if (snapDebounceTimer) {
     window.clearTimeout(snapDebounceTimer);
   }
+  if (audioPlayer) {
+    audioPlayer.pause();
+    audioPlayer = null;
+  }
 });
 </script>
 
@@ -2027,119 +2048,61 @@ onBeforeUnmount(() => {
               v-else-if="settingsSection === 'fuzzy-words'"
               class="fuzzy-words"
             >
-              <div class="fuzzy-words-header">
-                <div class="fuzzy-words-title-row">
-                  <span class="fuzzy-words-title">模糊词</span>
-                  <span v-if="fuzzyWordsLoading" class="fuzzy-words-status">
-                    加载中...
-                  </span>
-                </div>
-                <div class="fuzzy-sort-toggle" role="group" aria-label="排序">
+              <div v-if="fuzzyWordDetail" class="fuzzy-detail-page">
+                <div class="fuzzy-detail-header">
                   <button
+                    class="fuzzy-detail-back icon-button"
                     type="button"
-                    class="fuzzy-sort-button"
-                    :class="{ 'is-active': fuzzyWordSort === 'marked' }"
-                    @click="setFuzzySort('marked')"
+                    aria-label="返回"
+                    @click="closeFuzzyWordDetail"
                   >
-                    标记时间
+                    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+                      <path d="M13 6l-6 6 6 6" />
+                      <path d="M7 12h10" />
+                    </svg>
                   </button>
-                  <button
-                    type="button"
-                    class="fuzzy-sort-button"
-                    :class="{ 'is-active': fuzzyWordSort === 'alpha' }"
-                    @click="setFuzzySort('alpha')"
-                  >
-                    字母
-                  </button>
-                </div>
-              </div>
-              <div class="fuzzy-words-toolbar">
-                <label class="fuzzy-select-all">
-                  <input
-                    type="checkbox"
-                    :checked="isFuzzyAllSelected"
-                    @change="toggleFuzzySelectAll"
-                  />
-                  <span>全选</span>
-                </label>
-                <button
-                  class="fuzzy-clear-button"
-                  type="button"
-                  :disabled="!hasFuzzySelection"
-                  @click="clearFuzzyMarks(fuzzySelectedIds)"
-                >
-                  取消模糊
-                </button>
-                <span class="fuzzy-words-count">{{ fuzzyWords.length }} 个</span>
-              </div>
-              <p v-if="fuzzyWordsNotice" class="fuzzy-words-notice">
-                {{ fuzzyWordsNotice }}
-              </p>
-              <p
-                v-else-if="!fuzzyWords.length && !fuzzyWordsLoading"
-                class="fuzzy-words-empty"
-              >
-                暂无模糊词
-              </p>
-              <div v-else class="fuzzy-words-body">
-                <div class="fuzzy-words-list">
-                  <div
-                    v-for="item in fuzzyWords"
-                    :key="item.id"
-                    class="fuzzy-word-row"
-                    :class="{ 'is-active': fuzzyWordDetailId === item.id }"
-                    @click="openFuzzyWordDetail(item)"
-                  >
-                    <label class="fuzzy-word-checkbox" @click.stop>
-                      <input
-                        type="checkbox"
-                        :checked="fuzzySelectedIds.includes(item.id)"
-                        @change="toggleFuzzyWordSelection(item.id)"
-                      />
-                    </label>
-                    <div class="fuzzy-word-meta">
-                      <div class="fuzzy-word-text">{{ item.word }}</div>
-                      <div
-                        v-if="item.part_of_speech_and_meanings"
-                        class="fuzzy-word-meaning"
-                      >
-                        {{ item.part_of_speech_and_meanings }}
-                      </div>
-                    </div>
-                    <button
-                      class="fuzzy-word-action"
-                      type="button"
-                      @click.stop="clearFuzzyMarks([item.id])"
-                    >
-                      取消
-                    </button>
+                  <div class="fuzzy-detail-title-group">
+                    <span class="fuzzy-detail-title">模糊词详情</span>
+                    <span class="fuzzy-detail-word">{{ fuzzyWordDetail.word }}</span>
                   </div>
                 </div>
-                <div v-if="fuzzyWordDetail" class="fuzzy-word-detail">
-                  <div class="fuzzy-word-detail-header">
-                    <span class="fuzzy-word-detail-title">
-                      {{ fuzzyWordDetail.word }}
-                    </span>
+                <div class="fuzzy-detail-body">
+                  <p
+                    v-if="fuzzyWordDetail.part_of_speech_and_meanings"
+                    class="fuzzy-detail-meaning"
+                  >
+                    {{ fuzzyWordDetail.part_of_speech_and_meanings }}
+                  </p>
+                  <div class="fuzzy-detail-audio">
                     <button
-                      class="fuzzy-word-detail-close"
+                      class="fuzzy-audio-button"
                       type="button"
-                      @click="closeFuzzyWordDetail"
+                      :disabled="!fuzzyWordDetail.audio_uk"
+                      @click="playAudio(fuzzyWordDetail.audio_uk)"
                     >
-                      关闭
+                      英式发音
+                    </button>
+                    <button
+                      class="fuzzy-audio-button"
+                      type="button"
+                      :disabled="!fuzzyWordDetail.audio_us"
+                      @click="playAudio(fuzzyWordDetail.audio_us)"
+                    >
+                      美式发音
                     </button>
                   </div>
                   <p
-                    v-if="fuzzyWordDetail.part_of_speech_and_meanings"
-                    class="fuzzy-word-detail-meaning"
+                    v-if="!fuzzyWordDetail.audio_uk && !fuzzyWordDetail.audio_us"
+                    class="fuzzy-audio-empty"
                   >
-                    {{ fuzzyWordDetail.part_of_speech_and_meanings }}
+                    暂无发音
                   </p>
                   <div
                     v-if="
                       fuzzyWordDetail.example_sentence ||
                       fuzzyWordDetail.example_translation
                     "
-                    class="fuzzy-word-detail-examples"
+                    class="fuzzy-detail-examples"
                   >
                     <p v-if="fuzzyWordDetail.example_sentence" class="example">
                       {{ fuzzyWordDetail.example_sentence }}
@@ -2153,6 +2116,96 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </div>
+              <template v-else>
+                <div class="fuzzy-words-header">
+                  <div class="fuzzy-words-title-row">
+                    <span class="fuzzy-words-title">模糊词</span>
+                    <span v-if="fuzzyWordsLoading" class="fuzzy-words-status">
+                      加载中...
+                    </span>
+                  </div>
+                  <div class="fuzzy-sort-toggle" role="group" aria-label="排序">
+                    <button
+                      type="button"
+                      class="fuzzy-sort-button"
+                      :class="{ 'is-active': fuzzyWordSort === 'marked' }"
+                      @click="setFuzzySort('marked')"
+                    >
+                      标记时间
+                    </button>
+                    <button
+                      type="button"
+                      class="fuzzy-sort-button"
+                      :class="{ 'is-active': fuzzyWordSort === 'alpha' }"
+                      @click="setFuzzySort('alpha')"
+                    >
+                      字母
+                    </button>
+                  </div>
+                </div>
+                <div class="fuzzy-words-toolbar">
+                  <label class="fuzzy-select-all">
+                    <input
+                      type="checkbox"
+                      :checked="isFuzzyAllSelected"
+                      @change="toggleFuzzySelectAll"
+                    />
+                    <span>全选</span>
+                  </label>
+                  <button
+                    class="fuzzy-clear-button"
+                    type="button"
+                    :disabled="!hasFuzzySelection"
+                    @click="clearFuzzyMarks(fuzzySelectedIds)"
+                  >
+                    取消模糊
+                  </button>
+                  <span class="fuzzy-words-count">{{ fuzzyWords.length }} 个</span>
+                </div>
+                <p v-if="fuzzyWordsNotice" class="fuzzy-words-notice">
+                  {{ fuzzyWordsNotice }}
+                </p>
+                <p
+                  v-else-if="!fuzzyWords.length && !fuzzyWordsLoading"
+                  class="fuzzy-words-empty"
+                >
+                  暂无模糊词
+                </p>
+                <div v-else class="fuzzy-words-body">
+                  <div class="fuzzy-words-list">
+                    <div
+                      v-for="item in fuzzyWords"
+                      :key="item.id"
+                      class="fuzzy-word-row"
+                      @click="openFuzzyWordDetail(item)"
+                    >
+                      <label class="fuzzy-word-checkbox" @click.stop>
+                        <input
+                          type="checkbox"
+                          :checked="fuzzySelectedIds.includes(item.id)"
+                          @change="toggleFuzzyWordSelection(item.id)"
+                        />
+                      </label>
+                      <div class="fuzzy-word-meta">
+                        <div class="fuzzy-word-text">{{ item.word }}</div>
+                        <div
+                          v-if="item.part_of_speech_and_meanings"
+                          class="fuzzy-word-meaning"
+                        >
+                          {{ item.part_of_speech_and_meanings }}
+                        </div>
+                      </div>
+                      <button
+                        class="fuzzy-word-action"
+                        type="button"
+                        @click.stop="clearFuzzyMarks([item.id])"
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </template>
             </div>
             <div
               v-else-if="settingsSection === 'study-calendar'"
@@ -3392,7 +3445,57 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.fuzzy-word-detail {
+.fuzzy-detail-page {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  min-height: 100%;
+}
+
+.fuzzy-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fuzzy-detail-back {
+  width: var(--icon-size);
+  height: var(--icon-size);
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  color: #1f1d1a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;
+  line-height: 0;
+  box-shadow: 0 8px 12px -14px var(--shadow);
+  --icon-glyph-size: calc(var(--icon-size) * 0.62);
+}
+
+.fuzzy-detail-title-group {
+  display: grid;
+  gap: 2px;
+}
+
+.fuzzy-detail-title {
+  font-size: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.fuzzy-detail-word {
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: "Fraunces", serif;
+}
+
+.fuzzy-detail-body {
   display: grid;
   gap: 6px;
   padding: 8px;
@@ -3401,20 +3504,21 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.7);
 }
 
-.fuzzy-word-detail-header {
+.fuzzy-detail-meaning {
+  margin: 0;
+  font-size: 0.55rem;
+  line-height: 1.3;
+  color: #2a2723;
+}
+
+.fuzzy-detail-audio {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
-.fuzzy-word-detail-title {
-  font-size: 0.68rem;
-  font-weight: 600;
-}
-
-.fuzzy-word-detail-close {
-  padding: 3px 8px;
+.fuzzy-audio-button {
+  padding: 4px 10px;
   border-radius: 8px;
   border: 1px solid var(--stroke);
   background: rgba(255, 255, 255, 0.85);
@@ -3425,14 +3529,18 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.fuzzy-word-detail-meaning {
-  margin: 0;
-  font-size: 0.55rem;
-  line-height: 1.3;
-  color: #2a2723;
+.fuzzy-audio-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
-.fuzzy-word-detail-examples {
+.fuzzy-audio-empty {
+  margin: 0;
+  font-size: 0.5rem;
+  color: var(--muted);
+}
+
+.fuzzy-detail-examples {
   display: grid;
   gap: 2px;
 }

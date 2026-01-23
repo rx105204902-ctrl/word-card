@@ -21,8 +21,12 @@ The system SHALL allow users to select one or more fuzzy words and remove the fu
 - **THEN** those words are removed from the fuzzy words list
 
 ### Requirement: Fuzzy word detail view
-The system SHALL open a detail view when the user selects a word, showing its meaning, example sentence, and example translation.
+The system SHALL open a dedicated detail subpage when the user selects a word, showing its meaning, example sentence, example translation, and available UK/US pronunciations. The detail subpage SHALL provide a back action in the top-left.
 
 #### Scenario: Open word detail
 - **WHEN** the user clicks a word in the fuzzy words list
-- **THEN** the system displays the word detail view with meaning and example content
+- **THEN** the system displays the word detail subpage with meaning, example content, and pronunciation controls
+
+#### Scenario: Return to fuzzy words list
+- **WHEN** the user activates the back action in the word detail subpage
+- **THEN** the system returns to the fuzzy words list
