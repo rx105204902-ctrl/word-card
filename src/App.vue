@@ -166,6 +166,7 @@ const EDGE_LINE_SIZE = { width: EDGE_LINE_THICKNESS, height: 80 };
 const EDGE_FRAME_FALLBACK = 5;
 const EDGE_LEFT_NUDGE = 11;
 const EDGE_ACTIVATE_PADDING = 8;
+const EDGE_REVEAL_HOLD_MS = 500;
 const FULL_WIDTH_MIN = BASE_FULL_SIZE.width;
 const FULL_WIDTH_MAX = 450;
 const FULL_HEIGHT_RATIO = BASE_FULL_SIZE.height / BASE_FULL_SIZE.width;
@@ -195,6 +196,7 @@ let snapAnchor = null;
 let snapInFlight = false;
 let snapDebounceTimer = null;
 let audioPlayer = null;
+let edgeRevealUntil = 0;
 
 const canImport = computed(
   () => hasCompletedUploads.value && !importBusy.value
@@ -1099,7 +1101,9 @@ const isCursorNearEdgeLine = async () => {
   if (!rect || !monitorRect) {
     return null;
   }
-  const withinY = cursor.y >= rect.top && cursor.y <= rect.bottom;
+  const withinY =
+    cursor.y >= rect.top - EDGE_ACTIVATE_PADDING &&
+    cursor.y <= rect.bottom + EDGE_ACTIVATE_PADDING;
   if (!withinY) {
     return false;
   }
@@ -2025,6 +2029,7 @@ const updateCompactFromCursor = async () => {
       }
       if (isNearEdge) {
         if (desiredCompact) {
+          edgeRevealUntil = Date.now() + EDGE_REVEAL_HOLD_MS;
           exitCompact();
         }
         return;
@@ -2032,6 +2037,9 @@ const updateCompactFromCursor = async () => {
       if (!desiredCompact) {
         enterCompact();
       }
+      return;
+    }
+    if (hideMode.value === "edge" && Date.now() < edgeRevealUntil) {
       return;
     }
     const isInside = await isCursorInsideWindow();
