@@ -165,6 +165,7 @@ const EDGE_LINE_THICKNESS = 1;
 const EDGE_LINE_SIZE = { width: EDGE_LINE_THICKNESS, height: 80 };
 const EDGE_FRAME_FALLBACK = 5;
 const EDGE_LEFT_NUDGE = 11;
+const EDGE_ACTIVATE_PADDING = 8;
 const FULL_WIDTH_MIN = BASE_FULL_SIZE.width;
 const FULL_WIDTH_MAX = 450;
 const FULL_HEIGHT_RATIO = BASE_FULL_SIZE.height / BASE_FULL_SIZE.width;
@@ -1084,6 +1085,28 @@ const isCursorInsideWindow = async () => {
   return insideX && insideY;
 };
 
+const isCursorNearEdgeLine = async () => {
+  const [cursor, rect, monitorRect] = await Promise.all([
+    cursorPosition(),
+    getWindowRect(),
+    getMonitorRect(),
+  ]);
+  if (!rect || !monitorRect) {
+    return null;
+  }
+  const withinY = cursor.y >= rect.top && cursor.y <= rect.bottom;
+  if (!withinY) {
+    return false;
+  }
+  if (edgeSide.value === "left") {
+    return cursor.x <= monitorRect.left + EDGE_ACTIVATE_PADDING;
+  }
+  if (edgeSide.value === "right") {
+    return cursor.x >= monitorRect.right - EDGE_ACTIVATE_PADDING;
+  }
+  return false;
+};
+
 const enterCompact = () => {
   requestCompactMode(true);
 };
@@ -1987,6 +2010,22 @@ const updateCompactFromCursor = async () => {
     if (isSettings.value) {
       if (desiredCompact) {
         exitCompact();
+      }
+      return;
+    }
+    if (isEdgeHidden.value) {
+      const isNearEdge = await isCursorNearEdgeLine();
+      if (isNearEdge == null) {
+        return;
+      }
+      if (isNearEdge) {
+        if (desiredCompact) {
+          exitCompact();
+        }
+        return;
+      }
+      if (!desiredCompact) {
+        enterCompact();
       }
       return;
     }
