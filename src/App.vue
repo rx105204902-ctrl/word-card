@@ -2062,17 +2062,6 @@ onBeforeUnmount(() => {
             >
               <div v-if="fuzzyWordDetail" class="fuzzy-detail-page">
                 <div class="fuzzy-detail-header">
-                  <button
-                    class="fuzzy-detail-back icon-button"
-                    type="button"
-                    aria-label="返回"
-                    @click="closeFuzzyWordDetail"
-                  >
-                    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-                      <path d="M13 6l-6 6 6 6" />
-                      <path d="M7 12h10" />
-                    </svg>
-                  </button>
                   <span class="fuzzy-detail-title">模糊词</span>
                 </div>
                 <div class="fuzzy-detail-body">
@@ -3477,24 +3466,6 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.fuzzy-detail-back {
-  width: var(--icon-size);
-  height: var(--icon-size);
-  padding: 0;
-  border-radius: 8px;
-  border: 1px solid var(--stroke);
-  background: rgba(255, 255, 255, 0.7);
-  cursor: pointer;
-  color: #1f1d1a;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0;
-  line-height: 0;
-  box-shadow: 0 8px 12px -14px var(--shadow);
-  --icon-glyph-size: calc(var(--icon-size) * 0.62);
 }
 
 .fuzzy-detail-title {
