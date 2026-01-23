@@ -19,7 +19,7 @@ The app SHALL start in compact mode at a fixed 150x50 size. When the pointer lea
 - **THEN** the window appears in 150x50 compact mode with only the active word visible
 
 ### Requirement: Fixed-size proportional layout
-The app SHALL render the full UI proportionally within a fixed aspect ratio based on the 350x155 reference size. The full window width SHALL be adjustable between 350px and 450px, and the height SHALL follow the same ratio.
+The app SHALL render the full UI proportionally within a fixed aspect ratio based on the 350x155 reference size, with all elements scaling from that layout as the window size changes. The full window width SHALL be adjustable between 350px and 450px, and the height SHALL follow the same ratio.
 
 #### Scenario: Full UI restored at adjusted size
 - **WHEN** the full UI is shown after a width adjustment

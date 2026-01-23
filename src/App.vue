@@ -200,6 +200,12 @@ const fullSize = computed(() => {
 const fullSizeLabel = computed(
   () => `${fullSize.value.width}px x ${fullSize.value.height}px`
 );
+const uiScale = computed(() =>
+  clamp(fullSize.value.width / BASE_FULL_SIZE.width, 0.5, 2)
+);
+const uiScaleStyle = computed(() => ({
+  "--ui-scale": uiScale.value,
+}));
 const dailyStudyCountMap = computed(() => {
   const map = {};
   studyCalendarCounts.value.forEach((item) => {
@@ -1897,7 +1903,8 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-else class="view view-main">
-      <main v-if="!isSettings" class="card">
+      <div class="view-main-scale" :style="uiScaleStyle">
+        <main v-if="!isSettings" class="card">
         <div class="top-row" @mousedown="handleDragStart">
           <div
             class="proficiency-box"
@@ -2009,8 +2016,8 @@ onBeforeUnmount(() => {
           <p class="empty-title">未选择词库</p>
           <p class="empty-desc">请前往设置选择或创建词库。</p>
         </div>
-      </main>
-      <section v-else class="settings">
+        </main>
+        <section v-else class="settings">
         <header class="settings-header" @mousedown="handleDragStart">
           <button
             class="back-button icon-button"
@@ -2759,7 +2766,8 @@ onBeforeUnmount(() => {
           >
             {{ tooltip.text }}
           </div>
-      </section>
+        </section>
+      </div>
     </div>
   </div>
 </template>
@@ -2803,6 +2811,15 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  align-items: start;
+  justify-items: start;
+}
+
+.view-main-scale {
+  width: 350px;
+  height: 155px;
+  transform: scale(var(--ui-scale, 1));
+  transform-origin: top left;
 }
 
 .view-compact {

@@ -5,7 +5,8 @@
 - [ ] 1.4 Implement hide mode toggle with edge-line behavior and restore-on-hover
 - [ ] 1.5 Add minimize-to-tray button in main UI and tray icon restore behavior
 - [ ] 1.6 Wire navigation to and from the subpages
-- [ ] 1.7 Style the More subpage and its destinations to match settings UI
+- [ ] 1.7 Scale full UI elements with window size changes (350x155 baseline)
+- [ ] 1.8 Style the More subpage and its destinations to match settings UI
 
 ## 2. Validation
 - [ ] 2.1 Manually verify: More subpage shows both buttons
