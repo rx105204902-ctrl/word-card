@@ -26,6 +26,7 @@ const fuzzyWordsLoading = ref(false);
 const fuzzyWordSort = ref("marked");
 const fuzzySelectedIds = ref([]);
 const fuzzyWordDetailId = ref(null);
+const fuzzyAudioPlaying = ref(null);
 const wordListMode = ref("existing");
 const selectedWordListId = ref(null);
 const newWordListName = ref("");
@@ -899,6 +900,7 @@ const setSettingsSection = (section) => {
   }
   if (section !== "fuzzy-words") {
     fuzzyWordDetailId.value = null;
+    stopAudioPlayback();
   }
   hideTooltip();
   if (section === "word-bank") {
@@ -1291,11 +1293,20 @@ const openFuzzyWordDetail = (word) => {
   if (!word?.id) {
     return;
   }
+  stopAudioPlayback();
   fuzzyWordDetailId.value = word.id;
 };
 
 const closeFuzzyWordDetail = () => {
   fuzzyWordDetailId.value = null;
+};
+
+const stopAudioPlayback = () => {
+  if (audioPlayer) {
+    audioPlayer.pause();
+    audioPlayer = null;
+  }
+  fuzzyAudioPlaying.value = null;
 };
 
 const formatPhonetic = (value) => {
@@ -1307,17 +1318,20 @@ const formatPhonetic = (value) => {
   return ` / ${normalized} / `;
 };
 
-const playAudio = (url) => {
+const playAudio = (kind, url) => {
   if (!url) {
     return;
   }
-  if (audioPlayer) {
-    audioPlayer.pause();
-    audioPlayer = null;
-  }
+  stopAudioPlayback();
   const player = new Audio(url);
   audioPlayer = player;
-  player.play().catch(() => {});
+  fuzzyAudioPlaying.value = kind;
+  player.addEventListener("ended", stopAudioPlayback, { once: true });
+  player.addEventListener("pause", stopAudioPlayback, { once: true });
+  player.addEventListener("error", stopAudioPlayback, { once: true });
+  player.play().catch(() => {
+    stopAudioPlayback();
+  });
 };
 
 const clearFuzzyMarks = async (wordIds) => {
@@ -1782,10 +1796,7 @@ onBeforeUnmount(() => {
   if (snapDebounceTimer) {
     window.clearTimeout(snapDebounceTimer);
   }
-  if (audioPlayer) {
-    audioPlayer.pause();
-    audioPlayer = null;
-  }
+  stopAudioPlayback();
 });
 </script>
 
@@ -2068,8 +2079,9 @@ onBeforeUnmount(() => {
                     <button
                       class="fuzzy-audio-pill"
                       type="button"
+                      :class="{ 'is-playing': fuzzyAudioPlaying === 'uk' }"
                       :disabled="!fuzzyWordDetail.audio_uk"
-                      @click="playAudio(fuzzyWordDetail.audio_uk)"
+                      @click="playAudio('uk', fuzzyWordDetail.audio_uk)"
                     >
                       <span class="fuzzy-audio-label">英</span>
                       <span class="fuzzy-audio-phonetic">
@@ -2080,8 +2092,9 @@ onBeforeUnmount(() => {
                     <button
                       class="fuzzy-audio-pill"
                       type="button"
+                      :class="{ 'is-playing': fuzzyAudioPlaying === 'us' }"
                       :disabled="!fuzzyWordDetail.audio_us"
-                      @click="playAudio(fuzzyWordDetail.audio_us)"
+                      @click="playAudio('us', fuzzyWordDetail.audio_us)"
                     >
                       <span class="fuzzy-audio-label">美</span>
                       <span class="fuzzy-audio-phonetic">
@@ -3514,6 +3527,19 @@ onBeforeUnmount(() => {
   opacity: 0.55;
 }
 
+.fuzzy-audio-pill.is-playing {
+  border-color: rgba(255, 75, 75, 0.35);
+  box-shadow: 0 6px 12px -10px rgba(255, 75, 75, 0.6);
+}
+
+.fuzzy-audio-pill.is-playing .fuzzy-audio-icon {
+  animation: fuzzy-audio-pulse 0.9s ease-in-out infinite;
+}
+
+.fuzzy-audio-pill.is-playing .fuzzy-audio-phonetic {
+  color: #1f1d1a;
+}
+
 .fuzzy-audio-label {
   font-size: 0.5rem;
   font-weight: 600;
@@ -3529,6 +3555,18 @@ onBeforeUnmount(() => {
 .fuzzy-audio-icon {
   font-size: 0.55rem;
   color: #ff4b4b;
+}
+
+@keyframes fuzzy-audio-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
 }
 
 .fuzzy-audio-empty {
