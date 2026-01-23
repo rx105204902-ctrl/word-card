@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -65,6 +66,35 @@ pub struct LearningProgress {
     pub word_id: i64,
     pub proficiency_score: i64,
     pub learn_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DailyStudyCount {
+    pub date: String,
+    pub word_count: i64,
+}
+
+#[derive(Default)]
+pub struct StudyCalendarCache {
+    counts: Mutex<Option<Vec<DailyStudyCount>>>,
+}
+
+impl StudyCalendarCache {
+    fn get(&self) -> Option<Vec<DailyStudyCount>> {
+        self.counts.lock().ok().and_then(|cache| cache.clone())
+    }
+
+    fn set(&self, counts: Vec<DailyStudyCount>) {
+        if let Ok(mut cache) = self.counts.lock() {
+            *cache = Some(counts);
+        }
+    }
+
+    pub fn invalidate(&self) {
+        if let Ok(mut cache) = self.counts.lock() {
+            *cache = None;
+        }
+    }
 }
 
 fn validate_headers(headers: &csv::StringRecord) -> Result<()> {
@@ -200,6 +230,27 @@ CREATE TABLE IF NOT EXISTS user_word_learning (
     .execute(pool)
     .await
     .context("Failed to initialize user_word_learning indexes")?;
+
+    sqlx::query(
+        r#"
+CREATE TABLE IF NOT EXISTS study_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  word_id INTEGER NOT NULL,
+  learned_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (word_id) REFERENCES word(id)
+)
+"#,
+    )
+    .execute(pool)
+    .await
+    .context("Failed to initialize study_log table")?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_study_log_learned_at ON study_log(learned_at)",
+    )
+    .execute(pool)
+    .await
+    .context("Failed to initialize study_log index")?;
 
     ensure_learning_columns(pool).await?;
 
@@ -775,6 +826,15 @@ async fn read_learning_progress(pool: &SqlitePool, word_id: i64) -> Result<Learn
     })
 }
 
+async fn record_study_event(pool: &SqlitePool, word_id: i64) -> Result<()> {
+    sqlx::query("INSERT INTO study_log (word_id, learned_at) VALUES (?, datetime('now'))")
+        .bind(word_id)
+        .execute(pool)
+        .await
+        .context("Failed to insert study log")?;
+    Ok(())
+}
+
 async fn increment_proficiency_for_word(
     pool: &SqlitePool,
     word_id: i64,
@@ -793,6 +853,7 @@ WHERE word_id = ?
     .execute(pool)
     .await
     .context("Failed to increment proficiency")?;
+    record_study_event(pool, word_id).await?;
     read_learning_progress(pool, word_id).await
 }
 
@@ -813,11 +874,13 @@ WHERE word_id = ?
     .execute(pool)
     .await
     .context("Failed to decrement proficiency")?;
+    record_study_event(pool, word_id).await?;
     read_learning_progress(pool, word_id).await
 }
 
 pub async fn increment_proficiency(
     app: &tauri::AppHandle,
+    cache: &StudyCalendarCache,
     word_id: i64,
 ) -> Result<LearningProgress> {
     if word_id <= 0 {
@@ -825,11 +888,14 @@ pub async fn increment_proficiency(
     }
     let pool = open_pool(app).await?;
     ensure_schema(&pool).await?;
-    increment_proficiency_for_word(&pool, word_id).await
+    let progress = increment_proficiency_for_word(&pool, word_id).await?;
+    cache.invalidate();
+    Ok(progress)
 }
 
 pub async fn decrement_proficiency(
     app: &tauri::AppHandle,
+    cache: &StudyCalendarCache,
     word_id: i64,
 ) -> Result<LearningProgress> {
     if word_id <= 0 {
@@ -837,7 +903,47 @@ pub async fn decrement_proficiency(
     }
     let pool = open_pool(app).await?;
     ensure_schema(&pool).await?;
-    decrement_proficiency_for_word(&pool, word_id).await
+    let progress = decrement_proficiency_for_word(&pool, word_id).await?;
+    cache.invalidate();
+    Ok(progress)
+}
+
+async fn list_daily_study_counts_internal(pool: &SqlitePool) -> Result<Vec<DailyStudyCount>> {
+    let rows = sqlx::query(
+        r#"
+SELECT date(learned_at) AS date, COUNT(DISTINCT word_id) AS word_count
+FROM study_log
+GROUP BY date(learned_at)
+ORDER BY date(learned_at) ASC
+"#,
+    )
+    .fetch_all(pool)
+    .await
+    .context("Failed to read daily study counts")?;
+
+    let mut counts = Vec::with_capacity(rows.len());
+    for row in rows {
+        let date: String = row.try_get("date").context("Failed to read date")?;
+        let word_count: i64 = row
+            .try_get("word_count")
+            .context("Failed to read word count")?;
+        counts.push(DailyStudyCount { date, word_count });
+    }
+    Ok(counts)
+}
+
+pub async fn list_daily_study_counts(
+    app: &tauri::AppHandle,
+    cache: &StudyCalendarCache,
+) -> Result<Vec<DailyStudyCount>> {
+    if let Some(cached) = cache.get() {
+        return Ok(cached);
+    }
+    let pool = open_pool(app).await?;
+    ensure_schema(&pool).await?;
+    let counts = list_daily_study_counts_internal(&pool).await?;
+    cache.set(counts.clone());
+    Ok(counts)
 }
 
 #[cfg(test)]

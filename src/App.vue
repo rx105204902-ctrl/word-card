@@ -32,6 +32,18 @@ const remainingWords = ref([]);
 const historyStack = ref([]);
 const prefetchWords = ref([]);
 const prefetchInFlight = ref(false);
+const studyCalendarView = ref("calendar");
+const studyCalendarCounts = ref([]);
+const studyCalendarLoading = ref(false);
+const studyCalendarNotice = ref("");
+const calendarAnchor = ref(new Date());
+const studyCalendarCache = { loadedAt: 0, data: [] };
+const studyChartHover = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+  value: 0,
+});
 const showUploadHero = computed(() => uploads.value.length === 0);
 const showContinueUpload = computed(() => uploads.value.length > 0);
 const hasCompletedUploads = computed(() =>
@@ -122,6 +134,12 @@ const MIN_CHUNK_SIZE = 512 * 1024;
 const MAX_CHUNK_SIZE = 8 * 1024 * 1024;
 const TARGET_CHUNK_COUNT = 20;
 const CHUNK_CONCURRENCY = 3;
+const STUDY_CALENDAR_CACHE_MS = 60 * 1000;
+const STUDY_CALENDAR_WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
+const STUDY_CHART_SIZE = { width: 280, height: 140 };
+const STUDY_CHART_PADDING = { top: 16, right: 12, bottom: 24, left: 28 };
+const STUDY_CHART_HIT_RADIUS = 8;
+const STUDY_CALENDAR_MIN_ANCHOR = new Date(2025, 0, 1);
 
 let cachedWindow = null;
 let isRepositioning = false;
@@ -141,6 +159,126 @@ const canConfirmImportDialog = computed(() => {
   }
   return newWordListName.value.trim().length > 0;
 });
+const dailyStudyCountMap = computed(() => {
+  const map = {};
+  studyCalendarCounts.value.forEach((item) => {
+    if (!item?.date) {
+      return;
+    }
+    map[item.date] = Number(item.word_count ?? 0);
+  });
+  return map;
+});
+const calendarMinAnchor = computed(() => STUDY_CALENDAR_MIN_ANCHOR.getTime());
+const calendarMaxAnchor = computed(() => getCalendarMaxAnchor().getTime());
+const canGoPrevMonth = computed(
+  () => calendarAnchor.value.getTime() > calendarMinAnchor.value
+);
+const canGoNextMonth = computed(
+  () => calendarAnchor.value.getTime() < calendarMaxAnchor.value
+);
+const calendarMonthLabel = computed(() => {
+  const anchor = calendarAnchor.value;
+  const month = String(anchor.getMonth() + 1).padStart(2, "0");
+  return `${anchor.getFullYear()}年${month}月`;
+});
+const calendarCells = computed(() =>
+  buildCalendarCells(calendarAnchor.value, dailyStudyCountMap.value)
+);
+const studyChartSeries = computed(() =>
+  buildStudyChartSeries(calendarAnchor.value, dailyStudyCountMap.value)
+);
+const studyChartYMax = computed(() => {
+  const max = Math.max(0, ...studyChartSeries.value.map((item) => item.count));
+  if (max <= 0) {
+    return 1;
+  }
+  const step = Math.max(1, Math.ceil(max / 4));
+  return step * 4;
+});
+const studyChartYTicks = computed(() => {
+  const height =
+    STUDY_CHART_SIZE.height -
+    STUDY_CHART_PADDING.top -
+    STUDY_CHART_PADDING.bottom;
+  const ticks = [];
+  const step = studyChartYMax.value / 4;
+  for (let i = 0; i <= 4; i += 1) {
+    const value = step * i;
+    const ratio = value / studyChartYMax.value;
+    const y =
+      STUDY_CHART_PADDING.top + height - Math.min(1, ratio) * height;
+    ticks.push({ value, label: String(value), y });
+  }
+  return ticks;
+});
+const studyChartPoints = computed(() => {
+  if (!studyChartSeries.value.length) {
+    return "";
+  }
+  const width =
+    STUDY_CHART_SIZE.width -
+    STUDY_CHART_PADDING.left -
+    STUDY_CHART_PADDING.right;
+  const height =
+    STUDY_CHART_SIZE.height -
+    STUDY_CHART_PADDING.top -
+    STUDY_CHART_PADDING.bottom;
+  const denominator = Math.max(1, studyChartSeries.value.length - 1);
+  return studyChartSeries.value
+    .map((item, index) => {
+      const ratio = item.count / studyChartYMax.value;
+      const x =
+        STUDY_CHART_PADDING.left + (index / denominator) * width;
+      const y =
+        STUDY_CHART_PADDING.top + height - Math.min(1, ratio) * height;
+      return `${x},${y}`;
+    })
+    .join(" ");
+});
+const studyChartPointList = computed(() => {
+  const series = studyChartSeries.value;
+  if (!series.length) {
+    return [];
+  }
+  const width =
+    STUDY_CHART_SIZE.width -
+    STUDY_CHART_PADDING.left -
+    STUDY_CHART_PADDING.right;
+  const height =
+    STUDY_CHART_SIZE.height -
+    STUDY_CHART_PADDING.top -
+    STUDY_CHART_PADDING.bottom;
+  const denominator = Math.max(1, series.length - 1);
+  return series.map((item, index) => {
+    const ratio = item.count / studyChartYMax.value;
+    const x = STUDY_CHART_PADDING.left + (index / denominator) * width;
+    const y =
+      STUDY_CHART_PADDING.top + height - Math.min(1, ratio) * height;
+    return { x, y, count: item.count };
+  });
+});
+const studyChartTooltipStyle = computed(() => ({
+  left: `${studyChartHover.value.x}px`,
+  top: `${studyChartHover.value.y}px`,
+}));
+const studyChartXAxisLabels = computed(() => {
+  const series = studyChartSeries.value;
+  if (!series.length) {
+    return [];
+  }
+  const width =
+    STUDY_CHART_SIZE.width -
+    STUDY_CHART_PADDING.left -
+    STUDY_CHART_PADDING.right;
+  const denominator = Math.max(1, series.length - 1);
+  const indices = [0, Math.floor(series.length / 2), series.length - 1];
+  const unique = Array.from(new Set(indices));
+  return unique.map((index) => ({
+    x: STUDY_CHART_PADDING.left + (index / denominator) * width,
+    label: series[index]?.label ?? "",
+  }));
+});
 
 const getAppWindow = () => {
   if (!cachedWindow) {
@@ -155,6 +293,147 @@ const getAppWindow = () => {
 };
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+const formatDateKey = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const setCalendarAnchor = (value) => {
+  calendarAnchor.value = clampCalendarAnchor(value);
+};
+
+const shiftCalendarMonth = (delta) => {
+  const anchor = calendarAnchor.value;
+  const next = new Date(anchor.getFullYear(), anchor.getMonth() + delta, 1);
+  setCalendarAnchor(next);
+};
+
+const distanceToSegment = (x, y, start, end) => {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  if (dx === 0 && dy === 0) {
+    return Math.hypot(x - start.x, y - start.y);
+  }
+  const t = ((x - start.x) * dx + (y - start.y) * dy) / (dx * dx + dy * dy);
+  const clamped = Math.max(0, Math.min(1, t));
+  const projX = start.x + clamped * dx;
+  const projY = start.y + clamped * dy;
+  return Math.hypot(x - projX, y - projY);
+};
+
+const handleStudyChartMove = (event) => {
+  const points = studyChartPointList.value;
+  if (!points.length) {
+    studyChartHover.value.visible = false;
+    return;
+  }
+  const rect = event.currentTarget.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  let nearest = null;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const start = points[i];
+    const end = points[i + 1];
+    const distance = distanceToSegment(x, y, start, end);
+    if (!nearest || distance < nearest.distance) {
+      const midX = (start.x + end.x) / 2;
+      const target = x <= midX ? start : end;
+      nearest = { ...target, distance };
+    }
+  }
+  if (!nearest && points.length === 1) {
+    const only = points[0];
+    nearest = {
+      ...only,
+      distance: Math.hypot(x - only.x, y - only.y),
+    };
+  }
+  if (!nearest || nearest.distance > STUDY_CHART_HIT_RADIUS) {
+    studyChartHover.value.visible = false;
+    return;
+  }
+  studyChartHover.value = {
+    visible: true,
+    x: nearest.x,
+    y: Math.max(nearest.y - 18, 6),
+    value: nearest.count,
+  };
+};
+
+const hideStudyChartTooltip = () => {
+  studyChartHover.value.visible = false;
+};
+
+const normalizeMonthAnchor = (value) =>
+  new Date(value.getFullYear(), value.getMonth(), 1);
+
+const getCalendarMaxAnchor = () => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), 1);
+};
+
+const clampCalendarAnchor = (anchor) => {
+  const normalized = normalizeMonthAnchor(anchor);
+  const minTime = STUDY_CALENDAR_MIN_ANCHOR.getTime();
+  const maxTime = getCalendarMaxAnchor().getTime();
+  const value = normalized.getTime();
+  if (value < minTime) {
+    return new Date(minTime);
+  }
+  if (value > maxTime) {
+    return new Date(maxTime);
+  }
+  return normalized;
+};
+
+const buildCalendarCells = (anchor, countsByDate) => {
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+  const firstDay = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const offset = (firstDay.getDay() + 6) % 7;
+  const total = offset + daysInMonth;
+  const trailing = (7 - (total % 7)) % 7;
+  const totalCells = total + trailing;
+  const todayKey = formatDateKey(new Date());
+  const cells = [];
+  for (let i = 0; i < totalCells; i += 1) {
+    const dayIndex = i - offset + 1;
+    const date = new Date(year, month, dayIndex);
+    const dateKey = formatDateKey(date);
+    const isCurrentMonth = date.getMonth() === month;
+    const label = isCurrentMonth ? String(date.getDate()) : "";
+    const count = isCurrentMonth ? countsByDate[dateKey] ?? 0 : 0;
+    cells.push({
+      key: `${dateKey}-${i}`,
+      label,
+      count,
+      isCurrentMonth,
+      isToday: dateKey === todayKey,
+    });
+  }
+  return cells;
+};
+
+const buildStudyChartSeries = (anchor, countsByDate) => {
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const series = [];
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = new Date(year, month, day);
+    const key = formatDateKey(date);
+    series.push({
+      key,
+      label: String(day),
+      count: countsByDate[key] ?? 0,
+    });
+  }
+  return series;
+};
 
 const setWindowSize = async (width, height) => {
   const appWindow = getAppWindow();
@@ -601,6 +880,9 @@ const setSettingsSection = (section) => {
   if (section === "word-bank") {
     void refreshWordBank();
   }
+  if (section === "study-calendar") {
+    void fetchStudyCalendarCounts();
+  }
 };
 
 const formatBytes = (value) => {
@@ -924,6 +1206,39 @@ const refreshWordBank = async () => {
   }
 };
 
+const invalidateStudyCalendarCache = () => {
+  studyCalendarCache.loadedAt = 0;
+};
+
+const fetchStudyCalendarCounts = async (force = false) => {
+  if (studyCalendarLoading.value) {
+    return;
+  }
+  studyCalendarNotice.value = "";
+  const now = Date.now();
+  if (
+    !force &&
+    studyCalendarCache.loadedAt &&
+    now - studyCalendarCache.loadedAt < STUDY_CALENDAR_CACHE_MS
+  ) {
+    studyCalendarCounts.value = [...studyCalendarCache.data];
+    return;
+  }
+  studyCalendarLoading.value = true;
+  try {
+    const counts = await invoke("list_daily_study_counts");
+    const normalized = Array.isArray(counts) ? counts : [];
+    studyCalendarCounts.value = normalized;
+    studyCalendarCache.data = normalized;
+    studyCalendarCache.loadedAt = now;
+  } catch (error) {
+    studyCalendarNotice.value = error instanceof Error ? error.message : String(error);
+    studyCalendarCounts.value = [];
+  } finally {
+    studyCalendarLoading.value = false;
+  }
+};
+
 const loadWordLists = async () => {
   wordListLoading.value = true;
   wordListNotice.value = "";
@@ -1120,6 +1435,7 @@ const goNext = async () => {
         proficiency_score: progress.proficiency_score,
       },
     ];
+    invalidateStudyCalendarCache();
     await ensureNextWord();
   } catch (error) {
     learningNotice.value = error instanceof Error ? error.message : String(error);
@@ -1152,6 +1468,7 @@ const markFuzzy = async () => {
       ...currentWord.value,
       proficiency_score: progress.proficiency_score,
     };
+    invalidateStudyCalendarCache();
   } catch (error) {
     learningNotice.value = error instanceof Error ? error.message : String(error);
   } finally {
@@ -1292,6 +1609,7 @@ onMounted(async () => {
   desiredCompact = true;
   await applyDesiredMode();
   await refreshWordBank();
+  setCalendarAnchor(new Date());
   const appWindow = getAppWindow();
   if (appWindow) {
     unlistenMove = await appWindow.onMoved(() => {
@@ -1593,6 +1911,153 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div
+              v-else-if="settingsSection === 'study-calendar'"
+              class="study-calendar"
+            >
+              <div class="study-calendar-header">
+                <span class="study-calendar-title">学习日历</span>
+                <div class="study-calendar-toggle" role="group" aria-label="视图切换">
+                  <button
+                    type="button"
+                    class="study-calendar-toggle-button"
+                    :class="{ 'is-active': studyCalendarView === 'calendar' }"
+                    @click="studyCalendarView = 'calendar'"
+                  >
+                    日历
+                  </button>
+                  <button
+                    type="button"
+                    class="study-calendar-toggle-button"
+                    :class="{ 'is-active': studyCalendarView === 'line' }"
+                    @click="studyCalendarView = 'line'"
+                  >
+                    折线
+                  </button>
+                </div>
+              </div>
+              <p v-if="studyCalendarLoading" class="study-calendar-status">加载中...</p>
+              <p v-else-if="studyCalendarNotice" class="study-calendar-notice">
+                {{ studyCalendarNotice }}
+              </p>
+              <div v-else class="study-calendar-body">
+                <div class="study-calendar-month-nav">
+                  <button
+                    type="button"
+                    class="study-calendar-nav-button"
+                    :disabled="!canGoPrevMonth"
+                    @click="shiftCalendarMonth(-1)"
+                  >
+                    上一月
+                  </button>
+                  <span class="study-calendar-month-label">
+                    {{ calendarMonthLabel }}
+                  </span>
+                  <button
+                    type="button"
+                    class="study-calendar-nav-button"
+                    :disabled="!canGoNextMonth"
+                    @click="shiftCalendarMonth(1)"
+                  >
+                    下一月
+                  </button>
+                </div>
+                <template v-if="studyCalendarView === 'calendar'">
+                  <div class="study-calendar-weekdays">
+                    <span
+                      v-for="weekday in STUDY_CALENDAR_WEEKDAYS"
+                      :key="weekday"
+                      class="study-calendar-weekday"
+                    >
+                      {{ weekday }}
+                    </span>
+                  </div>
+                  <div class="study-calendar-grid">
+                    <div
+                      v-for="cell in calendarCells"
+                      :key="cell.key"
+                      class="study-calendar-cell"
+                      :class="{
+                        'has-study': cell.count > 0,
+                        'is-outside': !cell.isCurrentMonth,
+                        'is-today': cell.isToday,
+                      }"
+                    >
+                      <span class="study-calendar-date">{{ cell.label }}</span>
+                      <span v-if="cell.count > 0" class="study-calendar-count">
+                        {{ cell.count }}
+                      </span>
+                    </div>
+                  </div>
+                </template>
+                <template v-else>
+                  <div class="study-chart">
+                    <svg
+                      :viewBox="`0 0 ${STUDY_CHART_SIZE.width} ${STUDY_CHART_SIZE.height}`"
+                      preserveAspectRatio="none"
+                      role="img"
+                      aria-label="每日学习单词数量折线图"
+                      @mousemove="handleStudyChartMove"
+                      @mouseleave="hideStudyChartTooltip"
+                    >
+                      <line
+                        class="study-chart-axis"
+                        :x1="STUDY_CHART_PADDING.left"
+                        :y1="STUDY_CHART_PADDING.top"
+                        :x2="STUDY_CHART_PADDING.left"
+                        :y2="STUDY_CHART_SIZE.height - STUDY_CHART_PADDING.bottom"
+                      />
+                      <line
+                        class="study-chart-axis"
+                        :x1="STUDY_CHART_PADDING.left"
+                        :y1="STUDY_CHART_SIZE.height - STUDY_CHART_PADDING.bottom"
+                        :x2="STUDY_CHART_SIZE.width - STUDY_CHART_PADDING.right"
+                        :y2="STUDY_CHART_SIZE.height - STUDY_CHART_PADDING.bottom"
+                      />
+                      <g v-for="tick in studyChartYTicks" :key="tick.value">
+                        <line
+                          class="study-chart-grid"
+                          :x1="STUDY_CHART_PADDING.left"
+                          :y1="tick.y"
+                          :x2="STUDY_CHART_SIZE.width - STUDY_CHART_PADDING.right"
+                          :y2="tick.y"
+                        />
+                        <text
+                          class="study-chart-label"
+                          :x="STUDY_CHART_PADDING.left - 6"
+                          :y="tick.y + 3"
+                          text-anchor="end"
+                        >
+                          {{ tick.label }}
+                        </text>
+                      </g>
+                      <polyline
+                        v-if="studyChartPoints"
+                        class="study-chart-line"
+                        :points="studyChartPoints"
+                      />
+                      <g v-for="label in studyChartXAxisLabels" :key="label.x">
+                        <text
+                          class="study-chart-label"
+                          :x="label.x"
+                          :y="STUDY_CHART_SIZE.height - 6"
+                          text-anchor="middle"
+                        >
+                          {{ label.label }}
+                        </text>
+                      </g>
+                    </svg>
+                    <div
+                      v-if="studyChartHover.visible"
+                      class="study-chart-tooltip"
+                      :style="studyChartTooltipStyle"
+                    >
+                      {{ studyChartHover.value }}
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <div
               v-else-if="settingsSection === 'import'"
               class="import-page"
             >
@@ -1872,6 +2337,8 @@ onBeforeUnmount(() => {
 }
 
 .settings-button {
+  position: relative;
+  top: 5px;
   width: var(--icon-size);
   height: var(--icon-size);
   padding: 0;
@@ -2189,6 +2656,197 @@ onBeforeUnmount(() => {
   font-size: 0.58rem;
   color: var(--muted);
   line-height: 1.4;
+}
+
+.study-calendar {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.study-calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.study-calendar-title {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.study-calendar-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 10px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.study-calendar-toggle-button {
+  border: none;
+  background: transparent;
+  font-size: 0.5rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: #1f1d1a;
+  padding: 4px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.study-calendar-toggle-button.is-active {
+  background: #1b9aaa;
+  color: #fff;
+}
+
+.study-calendar-status,
+.study-calendar-notice {
+  margin: 0;
+  font-size: 0.52rem;
+  color: var(--muted);
+}
+
+.study-calendar-notice {
+  color: #9b1c1c;
+}
+
+.study-calendar-body {
+  display: grid;
+  gap: 6px;
+}
+
+.study-calendar-month-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.study-calendar-nav-button {
+  border-radius: 8px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.8);
+  font-size: 0.48rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 6px;
+  cursor: pointer;
+  color: #1f1d1a;
+}
+
+.study-calendar-nav-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.study-calendar-month-label {
+  font-size: 0.54rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.study-calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  text-align: center;
+  font-size: 0.45rem;
+  color: var(--muted);
+}
+
+.study-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.study-calendar-cell {
+  position: relative;
+  min-height: 26px;
+  border-radius: 6px;
+  padding: 2px 3px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(31, 29, 26, 0.08);
+  font-size: 0.48rem;
+  text-align: right;
+}
+
+.study-calendar-cell.is-outside {
+  opacity: 0.35;
+}
+
+.study-calendar-cell.has-study {
+  background: #dff5e1;
+  border-color: rgba(93, 168, 116, 0.35);
+}
+
+.study-calendar-date {
+  display: inline-block;
+}
+
+.study-calendar-count {
+  position: absolute;
+  left: 3px;
+  bottom: 2px;
+  font-size: 0.42rem;
+  font-weight: 600;
+  color: #2f6b3d;
+}
+
+.study-chart {
+  position: relative;
+  border-radius: 10px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.7);
+  padding: 6px;
+}
+
+.study-chart svg {
+  width: 100%;
+  height: 140px;
+  display: block;
+}
+
+.study-chart-axis {
+  stroke: rgba(31, 29, 26, 0.25);
+  stroke-width: 1;
+}
+
+.study-chart-grid {
+  stroke: rgba(31, 29, 26, 0.08);
+  stroke-width: 1;
+}
+
+.study-chart-line {
+  fill: none;
+  stroke: #1b9aaa;
+  stroke-width: 2;
+}
+
+.study-chart-label {
+  fill: var(--muted);
+  font-size: 0.45rem;
+}
+
+.study-chart-tooltip {
+  position: absolute;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #1f1d1a;
+  color: #fff;
+  font-size: 0.45rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .settings-more {

@@ -64,9 +64,10 @@ async fn allocate_learning_session(
 #[tauri::command]
 async fn increment_proficiency(
     app: tauri::AppHandle,
+    cache: tauri::State<'_, word_bank::StudyCalendarCache>,
     word_id: i64,
 ) -> Result<word_bank::LearningProgress, String> {
-    word_bank::increment_proficiency(&app, word_id)
+    word_bank::increment_proficiency(&app, cache.inner(), word_id)
         .await
         .map_err(|error| error.to_string())
 }
@@ -74,9 +75,20 @@ async fn increment_proficiency(
 #[tauri::command]
 async fn decrement_proficiency(
     app: tauri::AppHandle,
+    cache: tauri::State<'_, word_bank::StudyCalendarCache>,
     word_id: i64,
 ) -> Result<word_bank::LearningProgress, String> {
-    word_bank::decrement_proficiency(&app, word_id)
+    word_bank::decrement_proficiency(&app, cache.inner(), word_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn list_daily_study_counts(
+    app: tauri::AppHandle,
+    cache: tauri::State<'_, word_bank::StudyCalendarCache>,
+) -> Result<Vec<word_bank::DailyStudyCount>, String> {
+    word_bank::list_daily_study_counts(&app, cache.inner())
         .await
         .map_err(|error| error.to_string())
 }
@@ -167,6 +179,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(file_upload::UploadState::default())
+        .manage(word_bank::StudyCalendarCache::default())
         .setup(|app| {
             if let Err(error) = tauri::async_runtime::block_on(word_bank::init_database(&app.handle())) {
                 eprintln!("Failed to initialize database: {error}");
@@ -189,7 +202,8 @@ pub fn run() {
             finish_upload,
             cancel_upload,
             delete_upload,
-            import_uploaded_files
+            import_uploaded_files,
+            list_daily_study_counts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
