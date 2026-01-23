@@ -735,15 +735,12 @@ const updateSnapAnchorToEdge = async () => {
   if (!area || !rect) {
     return null;
   }
-  const kind = resolveCornerKind(area, rect);
-  let point = { x: area.left, y: area.top };
-  if (kind === "top-right") {
-    point = { x: area.right, y: area.top };
-  } else if (kind === "bottom-left") {
-    point = { x: area.left, y: area.bottom };
-  } else if (kind === "bottom-right") {
-    point = { x: area.right, y: area.bottom };
-  }
+  const isLeft = rect.centerX <= area.left + area.width / 2;
+  const kind = isLeft ? "edge-left" : "edge-right";
+  const point = {
+    x: isLeft ? area.left : area.right,
+    y: rect.centerY,
+  };
   snapAnchor = { kind, point };
   return snapAnchor;
 };
@@ -769,6 +766,14 @@ const resolvePositionForAnchor = (anchor, area, size) => {
   let x = minX;
   let y = minY;
   switch (anchor.kind) {
+    case "edge-left":
+      x = anchor.point.x;
+      y = anchor.point.y - size.height / 2;
+      break;
+    case "edge-right":
+      x = anchor.point.x - size.width;
+      y = anchor.point.y - size.height / 2;
+      break;
     case "top-right":
       x = anchor.point.x - size.width;
       y = anchor.point.y;
