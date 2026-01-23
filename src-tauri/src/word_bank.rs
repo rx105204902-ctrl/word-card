@@ -54,6 +54,7 @@ pub struct WordListCard {
 pub struct FuzzyWordItem {
     pub id: i64,
     pub word: String,
+    pub phonetic: Option<String>,
     pub part_of_speech_and_meanings: Option<String>,
     pub example_sentence: Option<String>,
     pub example_translation: Option<String>,
@@ -1113,6 +1114,7 @@ pub async fn list_fuzzy_words(
 SELECT
   w.id AS id,
   w.word AS word,
+  w.phonetic AS phonetic,
   w.part_of_speech_and_meanings AS part_of_speech_and_meanings,
   w.example_sentence AS example_sentence,
   w.example_translation AS example_translation,
@@ -1136,6 +1138,7 @@ ORDER BY {order_by}
         words.push(FuzzyWordItem {
             id: row.try_get("id").context("读取单词 ID 失败")?,
             word: row.try_get("word").context("读取单词失败")?,
+            phonetic: row.try_get("phonetic").context("读取音标失败")?,
             part_of_speech_and_meanings: row
                 .try_get("part_of_speech_and_meanings")
                 .context("读取释义失败")?,

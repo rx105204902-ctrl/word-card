@@ -1297,6 +1297,15 @@ const closeFuzzyWordDetail = () => {
   fuzzyWordDetailId.value = null;
 };
 
+const formatPhonetic = (value) => {
+  if (!value) {
+    return " / - / ";
+  }
+  const trimmed = value.trim();
+  const normalized = trimmed.replace(/^\[|\]$/g, "");
+  return ` / ${normalized} / `;
+};
+
 const playAudio = (url) => {
   if (!url) {
     return;
@@ -1889,7 +1898,10 @@ onBeforeUnmount(() => {
           </button>
           <span class="settings-title">设置</span>
         </header>
-        <div class="settings-body">
+        <div
+          class="settings-body"
+          :class="{ 'is-fuzzy-detail': Boolean(fuzzyWordDetail) }"
+        >
           <nav class="settings-nav" aria-label="设置导航">
             <button
               class="settings-nav-item icon-button"
@@ -2061,41 +2073,41 @@ onBeforeUnmount(() => {
                       <path d="M7 12h10" />
                     </svg>
                   </button>
-                  <div class="fuzzy-detail-title-group">
-                    <span class="fuzzy-detail-title">模糊词详情</span>
-                    <span class="fuzzy-detail-word">{{ fuzzyWordDetail.word }}</span>
-                  </div>
+                  <span class="fuzzy-detail-title">模糊词</span>
                 </div>
                 <div class="fuzzy-detail-body">
+                  <span class="fuzzy-detail-word">{{ fuzzyWordDetail.word }}</span>
+                  <div class="fuzzy-detail-audio">
+                    <button
+                      class="fuzzy-audio-pill"
+                      type="button"
+                      :disabled="!fuzzyWordDetail.audio_uk"
+                      @click="playAudio(fuzzyWordDetail.audio_uk)"
+                    >
+                      <span class="fuzzy-audio-label">英</span>
+                      <span class="fuzzy-audio-phonetic">
+                        {{ formatPhonetic(fuzzyWordDetail.phonetic) }}
+                      </span>
+                      <span class="fuzzy-audio-icon">&#x266A;</span>
+                    </button>
+                    <button
+                      class="fuzzy-audio-pill"
+                      type="button"
+                      :disabled="!fuzzyWordDetail.audio_us"
+                      @click="playAudio(fuzzyWordDetail.audio_us)"
+                    >
+                      <span class="fuzzy-audio-label">美</span>
+                      <span class="fuzzy-audio-phonetic">
+                        {{ formatPhonetic(fuzzyWordDetail.phonetic) }}
+                      </span>
+                      <span class="fuzzy-audio-icon">&#x266A;</span>
+                    </button>
+                  </div>
                   <p
                     v-if="fuzzyWordDetail.part_of_speech_and_meanings"
                     class="fuzzy-detail-meaning"
                   >
                     {{ fuzzyWordDetail.part_of_speech_and_meanings }}
-                  </p>
-                  <div class="fuzzy-detail-audio">
-                    <button
-                      class="fuzzy-audio-button"
-                      type="button"
-                      :disabled="!fuzzyWordDetail.audio_uk"
-                      @click="playAudio(fuzzyWordDetail.audio_uk)"
-                    >
-                      英式发音
-                    </button>
-                    <button
-                      class="fuzzy-audio-button"
-                      type="button"
-                      :disabled="!fuzzyWordDetail.audio_us"
-                      @click="playAudio(fuzzyWordDetail.audio_us)"
-                    >
-                      美式发音
-                    </button>
-                  </div>
-                  <p
-                    v-if="!fuzzyWordDetail.audio_uk && !fuzzyWordDetail.audio_us"
-                    class="fuzzy-audio-empty"
-                  >
-                    暂无发音
                   </p>
                   <div
                     v-if="
@@ -2885,6 +2897,14 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+.settings-body.is-fuzzy-detail {
+  grid-template-columns: 1fr;
+}
+
+.settings-body.is-fuzzy-detail .settings-nav {
+  display: none;
+}
+
 .settings-nav {
   display: grid;
   align-content: start;
@@ -3450,6 +3470,7 @@ onBeforeUnmount(() => {
   grid-template-rows: auto 1fr;
   gap: 8px;
   min-height: 100%;
+  height: 100%;
 }
 
 .fuzzy-detail-header {
@@ -3476,11 +3497,6 @@ onBeforeUnmount(() => {
   --icon-glyph-size: calc(var(--icon-size) * 0.62);
 }
 
-.fuzzy-detail-title-group {
-  display: grid;
-  gap: 2px;
-}
-
 .fuzzy-detail-title {
   font-size: 0.5rem;
   font-weight: 600;
@@ -3490,15 +3506,15 @@ onBeforeUnmount(() => {
 }
 
 .fuzzy-detail-word {
-  font-size: 0.8rem;
+  font-size: 0.95rem;
   font-weight: 600;
   font-family: "Fraunces", serif;
 }
 
 .fuzzy-detail-body {
   display: grid;
-  gap: 6px;
-  padding: 8px;
+  gap: 8px;
+  padding: 10px;
   border-radius: 10px;
   border: 1px solid var(--stroke);
   background: rgba(255, 255, 255, 0.7);
@@ -3506,32 +3522,51 @@ onBeforeUnmount(() => {
 
 .fuzzy-detail-meaning {
   margin: 0;
-  font-size: 0.55rem;
+  font-size: 0.6rem;
   line-height: 1.3;
   color: #2a2723;
 }
 
 .fuzzy-detail-audio {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
-.fuzzy-audio-button {
-  padding: 4px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--stroke);
-  background: rgba(255, 255, 255, 0.85);
+.fuzzy-audio-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(31, 29, 26, 0.08);
+  background: #f4f5f7;
   font-size: 0.5rem;
   font-weight: 600;
-  letter-spacing: 0.08em;
   color: #1f1d1a;
   cursor: pointer;
 }
 
-.fuzzy-audio-button:disabled {
+.fuzzy-audio-pill:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.fuzzy-audio-label {
+  font-size: 0.5rem;
+  font-weight: 600;
+}
+
+.fuzzy-audio-phonetic {
+  font-size: 0.5rem;
+  color: #7a7a7a;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.fuzzy-audio-icon {
+  font-size: 0.55rem;
+  color: #ff4b4b;
 }
 
 .fuzzy-audio-empty {
