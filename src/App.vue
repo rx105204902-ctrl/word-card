@@ -20,6 +20,12 @@ const importDialogVisible = ref(false);
 const wordListCards = ref([]);
 const wordBankNotice = ref("");
 const wordBankLoading = ref(false);
+const fuzzyWords = ref([]);
+const fuzzyWordsNotice = ref("");
+const fuzzyWordsLoading = ref(false);
+const fuzzyWordSort = ref("marked");
+const fuzzySelectedIds = ref([]);
+const fuzzyWordDetailId = ref(null);
 const wordListMode = ref("existing");
 const selectedWordListId = ref(null);
 const newWordListName = ref("");
@@ -49,7 +55,10 @@ const showContinueUpload = computed(() => uploads.value.length > 0);
 const hasCompletedUploads = computed(() =>
   uploads.value.some((item) => item.status === "completed")
 );
-const hasWordLists = computed(() => wordListCards.value.length > 0);
+const selectableWordListCards = computed(() =>
+  wordListCards.value.filter((item) => !item.is_system)
+);
+const hasWordLists = computed(() => selectableWordListCards.value.length > 0);
 const hasActiveWordList = computed(() =>
   wordListCards.value.some((item) => item.is_active)
 );
@@ -103,6 +112,17 @@ const canGoNext = computed(
 );
 const canMarkFuzzy = computed(
   () => hasActiveWordList.value && hasCurrentWord.value && !learningBusy.value
+);
+const hasFuzzyWords = computed(() => fuzzyWords.value.length > 0);
+const hasFuzzySelection = computed(() => fuzzySelectedIds.value.length > 0);
+const isFuzzyAllSelected = computed(
+  () =>
+    hasFuzzyWords.value && fuzzySelectedIds.value.length === fuzzyWords.value.length
+);
+const fuzzyWordDetail = computed(
+  () =>
+    fuzzyWords.value.find((item) => item.id === fuzzyWordDetailId.value) ??
+    null
 );
 const nextLabel = computed(() => {
   if (learningBusy.value) {
@@ -880,6 +900,9 @@ const setSettingsSection = (section) => {
   if (section === "word-bank") {
     void refreshWordBank();
   }
+  if (section === "fuzzy-words") {
+    void refreshFuzzyWords();
+  }
   if (section === "study-calendar") {
     void fetchStudyCalendarCounts();
   }
@@ -1206,6 +1229,92 @@ const refreshWordBank = async () => {
   }
 };
 
+const normalizeFuzzyWords = (value) => (Array.isArray(value) ? value : []);
+
+const syncFuzzySelection = (nextWords) => {
+  const ids = new Set(nextWords.map((item) => item.id));
+  fuzzySelectedIds.value = fuzzySelectedIds.value.filter((id) => ids.has(id));
+  if (!ids.has(fuzzyWordDetailId.value)) {
+    fuzzyWordDetailId.value = null;
+  }
+};
+
+const requestFuzzyWords = async () => {
+  const words = await invoke("list_fuzzy_words", { sort: fuzzyWordSort.value });
+  return normalizeFuzzyWords(words);
+};
+
+const refreshFuzzyWords = async () => {
+  if (fuzzyWordsLoading.value) {
+    return;
+  }
+  fuzzyWordsLoading.value = true;
+  fuzzyWordsNotice.value = "";
+  try {
+    const words = await requestFuzzyWords();
+    fuzzyWords.value = words;
+    syncFuzzySelection(words);
+  } catch (error) {
+    fuzzyWordsNotice.value = error instanceof Error ? error.message : String(error);
+    fuzzyWords.value = [];
+    syncFuzzySelection([]);
+  } finally {
+    fuzzyWordsLoading.value = false;
+  }
+};
+
+const toggleFuzzyWordSelection = (wordId) => {
+  if (!wordId) {
+    return;
+  }
+  if (fuzzySelectedIds.value.includes(wordId)) {
+    fuzzySelectedIds.value = fuzzySelectedIds.value.filter((id) => id !== wordId);
+  } else {
+    fuzzySelectedIds.value = [...fuzzySelectedIds.value, wordId];
+  }
+};
+
+const toggleFuzzySelectAll = () => {
+  if (isFuzzyAllSelected.value) {
+    fuzzySelectedIds.value = [];
+  } else {
+    fuzzySelectedIds.value = fuzzyWords.value.map((item) => item.id);
+  }
+};
+
+const openFuzzyWordDetail = (word) => {
+  if (!word?.id) {
+    return;
+  }
+  fuzzyWordDetailId.value = word.id;
+};
+
+const closeFuzzyWordDetail = () => {
+  fuzzyWordDetailId.value = null;
+};
+
+const clearFuzzyMarks = async (wordIds) => {
+  if (!Array.isArray(wordIds) || wordIds.length === 0) {
+    return;
+  }
+  fuzzyWordsNotice.value = "";
+  try {
+    await invoke("clear_fuzzy_marks", { wordIds });
+    await refreshFuzzyWords();
+    await refreshWordBank();
+  } catch (error) {
+    fuzzyWordsNotice.value = error instanceof Error ? error.message : String(error);
+  }
+};
+
+const setFuzzySort = async (sort) => {
+  if (!sort || fuzzyWordSort.value === sort) {
+    return;
+  }
+  fuzzyWordSort.value = sort;
+  await refreshFuzzyWords();
+};
+
 const invalidateStudyCalendarCache = () => {
   studyCalendarCache.loadedAt = 0;
 };
@@ -1244,16 +1353,17 @@ const loadWordLists = async () => {
   wordListNotice.value = "";
   try {
     wordListCards.value = await requestWordListCards();
-    if (!wordListCards.value.length) {
+    const selectable = wordListCards.value.filter((item) => !item.is_system);
+    if (!selectable.length) {
       wordListMode.value = "new";
       selectedWordListId.value = null;
       return;
     }
     if (
       !selectedWordListId.value ||
-      !wordListCards.value.some((item) => item.id === selectedWordListId.value)
+      !selectable.some((item) => item.id === selectedWordListId.value)
     ) {
-      selectedWordListId.value = wordListCards.value[0].id;
+      selectedWordListId.value = selectable[0].id;
     }
     if (wordListMode.value !== "new") {
       wordListMode.value = "existing";
@@ -1883,7 +1993,10 @@ onBeforeUnmount(() => {
                   :class="{ 'is-active': list.is_active }"
                 >
                   <div class="word-list-meta">
-                    <div class="word-list-title">{{ list.name }}</div>
+                    <div class="word-list-title-row">
+                      <div class="word-list-title">{{ list.name }}</div>
+                      <span v-if="list.is_system" class="word-list-tag">系统</span>
+                    </div>
                     <div class="word-list-count">{{ list.word_count }} 个单词</div>
                   </div>
                   <div class="word-list-actions">
@@ -1899,13 +2012,144 @@ onBeforeUnmount(() => {
                       {{ list.is_active ? "取消使用" : "使用" }}
                     </button>
                     <button
-                      v-if="!list.is_active"
+                      v-if="!list.is_active && !list.is_system"
                       class="word-list-action word-list-delete"
                       type="button"
                       @click="deleteWordList(list.id)"
                     >
                       删除
                     </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div
+              v-else-if="settingsSection === 'fuzzy-words'"
+              class="fuzzy-words"
+            >
+              <div class="fuzzy-words-header">
+                <div class="fuzzy-words-title-row">
+                  <span class="fuzzy-words-title">模糊词</span>
+                  <span v-if="fuzzyWordsLoading" class="fuzzy-words-status">
+                    加载中...
+                  </span>
+                </div>
+                <div class="fuzzy-sort-toggle" role="group" aria-label="排序">
+                  <button
+                    type="button"
+                    class="fuzzy-sort-button"
+                    :class="{ 'is-active': fuzzyWordSort === 'marked' }"
+                    @click="setFuzzySort('marked')"
+                  >
+                    标记时间
+                  </button>
+                  <button
+                    type="button"
+                    class="fuzzy-sort-button"
+                    :class="{ 'is-active': fuzzyWordSort === 'alpha' }"
+                    @click="setFuzzySort('alpha')"
+                  >
+                    字母
+                  </button>
+                </div>
+              </div>
+              <div class="fuzzy-words-toolbar">
+                <label class="fuzzy-select-all">
+                  <input
+                    type="checkbox"
+                    :checked="isFuzzyAllSelected"
+                    @change="toggleFuzzySelectAll"
+                  />
+                  <span>全选</span>
+                </label>
+                <button
+                  class="fuzzy-clear-button"
+                  type="button"
+                  :disabled="!hasFuzzySelection"
+                  @click="clearFuzzyMarks(fuzzySelectedIds)"
+                >
+                  取消模糊
+                </button>
+                <span class="fuzzy-words-count">{{ fuzzyWords.length }} 个</span>
+              </div>
+              <p v-if="fuzzyWordsNotice" class="fuzzy-words-notice">
+                {{ fuzzyWordsNotice }}
+              </p>
+              <p
+                v-else-if="!fuzzyWords.length && !fuzzyWordsLoading"
+                class="fuzzy-words-empty"
+              >
+                暂无模糊词
+              </p>
+              <div v-else class="fuzzy-words-body">
+                <div class="fuzzy-words-list">
+                  <div
+                    v-for="item in fuzzyWords"
+                    :key="item.id"
+                    class="fuzzy-word-row"
+                    :class="{ 'is-active': fuzzyWordDetailId === item.id }"
+                    @click="openFuzzyWordDetail(item)"
+                  >
+                    <label class="fuzzy-word-checkbox" @click.stop>
+                      <input
+                        type="checkbox"
+                        :checked="fuzzySelectedIds.includes(item.id)"
+                        @change="toggleFuzzyWordSelection(item.id)"
+                      />
+                    </label>
+                    <div class="fuzzy-word-meta">
+                      <div class="fuzzy-word-text">{{ item.word }}</div>
+                      <div
+                        v-if="item.part_of_speech_and_meanings"
+                        class="fuzzy-word-meaning"
+                      >
+                        {{ item.part_of_speech_and_meanings }}
+                      </div>
+                    </div>
+                    <button
+                      class="fuzzy-word-action"
+                      type="button"
+                      @click.stop="clearFuzzyMarks([item.id])"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+                <div v-if="fuzzyWordDetail" class="fuzzy-word-detail">
+                  <div class="fuzzy-word-detail-header">
+                    <span class="fuzzy-word-detail-title">
+                      {{ fuzzyWordDetail.word }}
+                    </span>
+                    <button
+                      class="fuzzy-word-detail-close"
+                      type="button"
+                      @click="closeFuzzyWordDetail"
+                    >
+                      关闭
+                    </button>
+                  </div>
+                  <p
+                    v-if="fuzzyWordDetail.part_of_speech_and_meanings"
+                    class="fuzzy-word-detail-meaning"
+                  >
+                    {{ fuzzyWordDetail.part_of_speech_and_meanings }}
+                  </p>
+                  <div
+                    v-if="
+                      fuzzyWordDetail.example_sentence ||
+                      fuzzyWordDetail.example_translation
+                    "
+                    class="fuzzy-word-detail-examples"
+                  >
+                    <p v-if="fuzzyWordDetail.example_sentence" class="example">
+                      {{ fuzzyWordDetail.example_sentence }}
+                    </p>
+                    <p
+                      v-if="fuzzyWordDetail.example_translation"
+                      class="example-cn"
+                    >
+                      {{ fuzzyWordDetail.example_translation }}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -2189,7 +2433,7 @@ onBeforeUnmount(() => {
                     :disabled="wordListMode !== 'existing' || !hasWordLists"
                   >
                     <option
-                      v-for="list in wordListCards"
+                      v-for="list in selectableWordListCards"
                       :key="list.id"
                       :value="list.id"
                     >
@@ -2919,9 +3163,27 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.word-list-title-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .word-list-title {
   font-size: 0.58rem;
   font-weight: 600;
+}
+
+.word-list-tag {
+  font-size: 0.42rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(27, 154, 170, 0.35);
+  background: rgba(27, 154, 170, 0.12);
+  color: #145e67;
 }
 
 .word-list-count {
@@ -2956,6 +3218,223 @@ onBeforeUnmount(() => {
 .word-list-action:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.fuzzy-words {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.fuzzy-words-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.fuzzy-words-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fuzzy-words-title {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fuzzy-words-status {
+  font-size: 0.5rem;
+  color: var(--muted);
+}
+
+.fuzzy-sort-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 10px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.fuzzy-sort-button {
+  border: none;
+  background: transparent;
+  font-size: 0.5rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: #1f1d1a;
+  padding: 4px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.fuzzy-sort-button.is-active {
+  background: rgba(27, 154, 170, 0.16);
+  color: #145e67;
+}
+
+.fuzzy-words-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.fuzzy-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.5rem;
+  color: #1f1d1a;
+}
+
+.fuzzy-clear-button {
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.85);
+  font-size: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #1f1d1a;
+  cursor: pointer;
+}
+
+.fuzzy-clear-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.fuzzy-words-count {
+  margin-left: auto;
+  font-size: 0.5rem;
+  color: var(--muted);
+}
+
+.fuzzy-words-notice {
+  margin: 0;
+  font-size: 0.52rem;
+  color: #9b1c1c;
+}
+
+.fuzzy-words-empty {
+  margin: 0;
+  font-size: 0.52rem;
+  color: var(--muted);
+}
+
+.fuzzy-words-body {
+  display: grid;
+  gap: 8px;
+}
+
+.fuzzy-words-list {
+  display: grid;
+  gap: 6px;
+}
+
+.fuzzy-word-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+}
+
+.fuzzy-word-row.is-active {
+  border-color: rgba(27, 154, 170, 0.4);
+  box-shadow: 0 10px 16px -16px rgba(27, 154, 170, 0.5);
+}
+
+.fuzzy-word-checkbox input {
+  width: 12px;
+  height: 12px;
+}
+
+.fuzzy-word-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fuzzy-word-text {
+  font-size: 0.6rem;
+  font-weight: 600;
+}
+
+.fuzzy-word-meaning {
+  font-size: 0.5rem;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.fuzzy-word-action {
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(180, 35, 24, 0.35);
+  background: rgba(255, 237, 235, 0.8);
+  font-size: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #b42318;
+  cursor: pointer;
+}
+
+.fuzzy-word-detail {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.fuzzy-word-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.fuzzy-word-detail-title {
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.fuzzy-word-detail-close {
+  padding: 3px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.85);
+  font-size: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #1f1d1a;
+  cursor: pointer;
+}
+
+.fuzzy-word-detail-meaning {
+  margin: 0;
+  font-size: 0.55rem;
+  line-height: 1.3;
+  color: #2a2723;
+}
+
+.fuzzy-word-detail-examples {
+  display: grid;
+  gap: 2px;
 }
 
 .import-page {

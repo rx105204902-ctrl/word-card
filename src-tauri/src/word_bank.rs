@@ -13,14 +13,15 @@ use sqlx::SqlitePool;
 use tauri::Manager;
 
 const REQUIRED_HEADERS: [&str; 7] = [
-    "word",
-    "phonetic",
-    "part_of_speech_and_meanings",
-    "example_sentence",
-    "example_translation",
-    "audio_uk",
-    "audio_us",
+  "word",
+  "phonetic",
+  "part_of_speech_and_meanings",
+  "example_sentence",
+  "example_translation",
+  "audio_uk",
+  "audio_us",
 ];
+const FUZZY_WORD_LIST_NAME: &str = "模糊词词库";
 
 #[derive(Debug, Deserialize)]
 struct FourRankCsvRecord {
@@ -46,6 +47,17 @@ pub struct WordListCard {
     pub name: String,
     pub word_count: i64,
     pub is_active: bool,
+    pub is_system: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FuzzyWordItem {
+    pub id: i64,
+    pub word: String,
+    pub part_of_speech_and_meanings: Option<String>,
+    pub example_sentence: Option<String>,
+    pub example_translation: Option<String>,
+    pub fuzzy_marked_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -216,6 +228,8 @@ CREATE TABLE IF NOT EXISTS user_word_learning (
   proficiency_score INTEGER NOT NULL DEFAULT 0,
   last_learned_at TEXT,
   learn_count INTEGER NOT NULL DEFAULT 0,
+  is_fuzzy INTEGER NOT NULL DEFAULT 0,
+  fuzzy_marked_at TEXT,
   FOREIGN KEY (word_id) REFERENCES word(id)
 )
 "#,
@@ -273,6 +287,8 @@ async fn ensure_learning_columns(pool: &SqlitePool) -> Result<()> {
 
     let has_last_studied = columns.contains("last_studied_at");
     let has_study_count = columns.contains("study_count");
+    let has_is_fuzzy = columns.contains("is_fuzzy");
+    let has_fuzzy_marked_at = columns.contains("fuzzy_marked_at");
 
     if !columns.contains("last_learned_at") {
         sqlx::query("ALTER TABLE user_word_learning ADD COLUMN last_learned_at TEXT")
@@ -288,6 +304,22 @@ async fn ensure_learning_columns(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await
         .context("Failed to add learn_count column")?;
+    }
+
+    if !has_is_fuzzy {
+        sqlx::query(
+            "ALTER TABLE user_word_learning ADD COLUMN is_fuzzy INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(pool)
+        .await
+        .context("Failed to add is_fuzzy column")?;
+    }
+
+    if !has_fuzzy_marked_at {
+        sqlx::query("ALTER TABLE user_word_learning ADD COLUMN fuzzy_marked_at TEXT")
+            .execute(pool)
+            .await
+            .context("Failed to add fuzzy_marked_at column")?;
     }
 
     if has_last_studied {
@@ -322,15 +354,118 @@ WHERE study_count IS NOT NULL
     Ok(())
 }
 
+async fn sync_fuzzy_word_list(pool: &SqlitePool) -> Result<()> {
+    let fuzzy_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(1) FROM user_word_learning WHERE is_fuzzy = 1",
+    )
+    .fetch_one(pool)
+    .await
+    .context("统计模糊词数量失败")?;
+
+    let mut tx = pool.begin().await.context("开启数据库事务失败")?;
+    let list_id: Option<i64> = sqlx::query_scalar("SELECT id FROM word_list WHERE name = ?")
+        .bind(FUZZY_WORD_LIST_NAME)
+        .fetch_optional(&mut *tx)
+        .await
+        .context("读取模糊词词库失败")?;
+
+    if fuzzy_count == 0 {
+        if let Some(list_id) = list_id {
+            sqlx::query("DELETE FROM word_list_map WHERE word_list_id = ?")
+                .bind(list_id)
+                .execute(&mut *tx)
+                .await
+                .context("清理模糊词词库关联失败")?;
+            sqlx::query("DELETE FROM word_list WHERE id = ?")
+                .bind(list_id)
+                .execute(&mut *tx)
+                .await
+                .context("移除模糊词词库失败")?;
+            sqlx::query(
+                "UPDATE word_list_state SET active_word_list_id = NULL, updated_at = datetime('now') WHERE id = 1 AND active_word_list_id = ?",
+            )
+            .bind(list_id)
+            .execute(&mut *tx)
+            .await
+            .context("更新当前词库失败")?;
+        }
+        tx.commit().await.context("提交数据库事务失败")?;
+        return Ok(());
+    }
+
+    let list_id = match list_id {
+        Some(id) => id,
+        None => {
+            let result = sqlx::query("INSERT INTO word_list (name) VALUES (?)")
+                .bind(FUZZY_WORD_LIST_NAME)
+                .execute(&mut *tx)
+                .await
+                .context("创建模糊词词库失败")?;
+            result.last_insert_rowid()
+        }
+    };
+
+    sqlx::query(
+        r#"
+DELETE FROM word_list_map
+WHERE word_list_id = ?
+  AND word_id NOT IN (SELECT word_id FROM user_word_learning WHERE is_fuzzy = 1)
+"#,
+    )
+    .bind(list_id)
+    .execute(&mut *tx)
+    .await
+    .context("同步模糊词词库关联失败")?;
+
+    sqlx::query(
+        r#"
+INSERT OR IGNORE INTO word_list_map (word_list_id, word_id)
+SELECT ?, word_id FROM user_word_learning WHERE is_fuzzy = 1
+"#,
+    )
+    .bind(list_id)
+    .execute(&mut *tx)
+    .await
+    .context("写入模糊词词库关联失败")?;
+
+    tx.commit().await.context("提交数据库事务失败")?;
+    Ok(())
+}
+
+async fn mark_word_fuzzy(pool: &SqlitePool, word_id: i64) -> Result<()> {
+    let result = sqlx::query(
+        "UPDATE user_word_learning SET is_fuzzy = 1, fuzzy_marked_at = datetime('now') WHERE word_id = ?",
+    )
+    .bind(word_id)
+    .execute(pool)
+    .await
+    .context("更新模糊标记失败")?;
+
+    if result.rows_affected() == 0 {
+        ensure_learning_row(pool, word_id).await?;
+        sqlx::query(
+            "UPDATE user_word_learning SET is_fuzzy = 1, fuzzy_marked_at = datetime('now') WHERE word_id = ?",
+        )
+        .bind(word_id)
+        .execute(pool)
+        .await
+        .context("更新模糊标记失败")?;
+    }
+
+    Ok(())
+}
+
 pub async fn init_database(app: &tauri::AppHandle) -> Result<()> {
     let pool = open_pool(app).await?;
     ensure_schema(&pool).await?;
+    sync_fuzzy_word_list(&pool).await?;
     Ok(())
 }
 
 pub async fn list_word_lists(app: &tauri::AppHandle) -> Result<Vec<WordListCard>> {
     let pool = open_pool(app).await?;
     ensure_schema(&pool).await?;
+    sync_fuzzy_word_list(&pool).await?;
 
     let rows = sqlx::query(
         r#"
@@ -363,11 +498,13 @@ ORDER BY is_active DESC, wl.created_at DESC, wl.id DESC
         let is_active: i64 = row
             .try_get("is_active")
             .context("读取词库激活状态失败")?;
+        let is_system = name == FUZZY_WORD_LIST_NAME;
         lists.push(WordListCard {
             id,
             name,
             word_count,
             is_active: is_active != 0,
+            is_system,
         });
     }
     Ok(lists)
@@ -377,6 +514,9 @@ pub async fn create_word_list(app: &tauri::AppHandle, name: &str) -> Result<i64>
     let trimmed = name.trim();
     if trimmed.is_empty() {
         bail!("词库名称不能为空");
+    }
+    if trimmed == FUZZY_WORD_LIST_NAME {
+        bail!("系统词库不可创建");
     }
 
     let pool = open_pool(app).await?;
@@ -448,13 +588,18 @@ pub async fn delete_word_list(app: &tauri::AppHandle, word_list_id: i64) -> Resu
     ensure_schema(&pool).await?;
 
     let mut tx = pool.begin().await.context("开启数据库事务失败")?;
-    let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM word_list WHERE id = ?")
+    let row = sqlx::query("SELECT id, name FROM word_list WHERE id = ?")
         .bind(word_list_id)
         .fetch_optional(&mut *tx)
         .await
         .context("检查词库是否存在失败")?;
-    if exists.is_none() {
+    let Some(row) = row else {
         bail!("词库不存在");
+    };
+
+    let name: String = row.try_get("name").context("读取词库名称失败")?;
+    if name == FUZZY_WORD_LIST_NAME {
+        bail!("系统词库不可删除");
     }
 
     sqlx::query("DELETE FROM word_list_map WHERE word_list_id = ?")
@@ -904,6 +1049,8 @@ pub async fn decrement_proficiency(
     let pool = open_pool(app).await?;
     ensure_schema(&pool).await?;
     let progress = decrement_proficiency_for_word(&pool, word_id).await?;
+    mark_word_fuzzy(&pool, word_id).await?;
+    sync_fuzzy_word_list(&pool).await?;
     cache.invalidate();
     Ok(progress)
 }
@@ -944,6 +1091,94 @@ pub async fn list_daily_study_counts(
     let counts = list_daily_study_counts_internal(&pool).await?;
     cache.set(counts.clone());
     Ok(counts)
+}
+
+pub async fn list_fuzzy_words(
+    app: &tauri::AppHandle,
+    sort: Option<String>,
+) -> Result<Vec<FuzzyWordItem>> {
+    let pool = open_pool(app).await?;
+    ensure_schema(&pool).await?;
+    sync_fuzzy_word_list(&pool).await?;
+
+    let order_by = match sort.as_deref() {
+        Some("alpha") => "w.word COLLATE NOCASE ASC",
+        _ => "uwl.fuzzy_marked_at DESC, w.word COLLATE NOCASE ASC",
+    };
+
+    let query = format!(
+        r#"
+SELECT
+  w.id AS id,
+  w.word AS word,
+  w.part_of_speech_and_meanings AS part_of_speech_and_meanings,
+  w.example_sentence AS example_sentence,
+  w.example_translation AS example_translation,
+  uwl.fuzzy_marked_at AS fuzzy_marked_at
+FROM word w
+JOIN user_word_learning uwl ON w.id = uwl.word_id
+WHERE uwl.is_fuzzy = 1
+ORDER BY {order_by}
+"#
+    );
+
+    let rows = sqlx::query(&query)
+        .fetch_all(&pool)
+        .await
+        .context("读取模糊词列表失败")?;
+
+    let mut words = Vec::with_capacity(rows.len());
+    for row in rows {
+        words.push(FuzzyWordItem {
+            id: row.try_get("id").context("读取单词 ID 失败")?,
+            word: row.try_get("word").context("读取单词失败")?,
+            part_of_speech_and_meanings: row
+                .try_get("part_of_speech_and_meanings")
+                .context("读取释义失败")?,
+            example_sentence: row
+                .try_get("example_sentence")
+                .context("读取例句失败")?,
+            example_translation: row
+                .try_get("example_translation")
+                .context("读取例句释义失败")?,
+            fuzzy_marked_at: row
+                .try_get("fuzzy_marked_at")
+                .context("读取模糊标记时间失败")?,
+        });
+    }
+
+    Ok(words)
+}
+
+pub async fn clear_fuzzy_marks(
+    app: &tauri::AppHandle,
+    word_ids: Vec<i64>,
+) -> Result<()> {
+    let ids: Vec<i64> = word_ids.into_iter().filter(|id| *id > 0).collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+
+    let pool = open_pool(app).await?;
+    ensure_schema(&pool).await?;
+
+    let mut builder = QueryBuilder::new(
+        "UPDATE user_word_learning SET is_fuzzy = 0, fuzzy_marked_at = NULL WHERE word_id IN (",
+    );
+    let mut separated = builder.separated(", ");
+    for id in ids {
+        separated.push_bind(id);
+    }
+    builder.push(")");
+
+    builder
+        .build()
+        .execute(&pool)
+        .await
+        .context("清除模糊标记失败")?;
+
+    sync_fuzzy_word_list(&pool).await?;
+    Ok(())
 }
 
 #[cfg(test)]

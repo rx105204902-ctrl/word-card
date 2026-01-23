@@ -94,6 +94,26 @@ async fn list_daily_study_counts(
 }
 
 #[tauri::command]
+async fn list_fuzzy_words(
+    app: tauri::AppHandle,
+    sort: Option<String>,
+) -> Result<Vec<word_bank::FuzzyWordItem>, String> {
+    word_bank::list_fuzzy_words(&app, sort)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn clear_fuzzy_marks(
+    app: tauri::AppHandle,
+    word_ids: Vec<i64>,
+) -> Result<(), String> {
+    word_bank::clear_fuzzy_marks(&app, word_ids)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn start_upload(
     app: tauri::AppHandle,
     state: tauri::State<'_, file_upload::UploadState>,
@@ -203,7 +223,9 @@ pub fn run() {
             cancel_upload,
             delete_upload,
             import_uploaded_files,
-            list_daily_study_counts
+            list_daily_study_counts,
+            list_fuzzy_words,
+            clear_fuzzy_marks
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
