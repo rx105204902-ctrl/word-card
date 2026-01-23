@@ -532,6 +532,18 @@ const setWindowSize = async (width, height) => {
   }
 };
 
+const setWindowMinSize = async (size) => {
+  const appWindow = getAppWindow();
+  if (!appWindow) {
+    return;
+  }
+  try {
+    await appWindow.setMinSize(size);
+  } catch (error) {
+    console.warn("Failed to update minimum window size", error);
+  }
+};
+
 const setWindowPosition = async (position) => {
   const appWindow = getAppWindow();
   if (!appWindow || !position) {
@@ -794,13 +806,14 @@ const resolvePositionForAnchor = (anchor, area, size) => {
   const { minX, minY, maxX, maxY } = getSnapBounds(area, size);
   let x = minX;
   let y = minY;
+  const edgeOffset = Math.max(0, size.width - EDGE_LINE_THICKNESS);
   switch (anchor.kind) {
     case "edge-left":
-      x = edgeBounds.left;
+      x = edgeBounds.left - edgeOffset;
       y = anchor.point.y - size.height / 2;
       break;
     case "edge-right":
-      x = edgeBounds.right - size.width;
+      x = edgeBounds.right - EDGE_LINE_THICKNESS;
       y = anchor.point.y - size.height / 2;
       break;
     case "top-right":
@@ -821,8 +834,8 @@ const resolvePositionForAnchor = (anchor, area, size) => {
       y = anchor.point.y;
       break;
   }
-  const edgeMinX = edgeBounds.left;
-  const edgeMaxX = edgeBounds.right - size.width;
+  const edgeMinX = edgeBounds.left - edgeOffset;
+  const edgeMaxX = edgeBounds.right - EDGE_LINE_THICKNESS;
   const clampedX =
     anchor.kind === "edge-left" || anchor.kind === "edge-right"
       ? clamp(x, edgeMinX, edgeMaxX)
@@ -832,6 +845,9 @@ const resolvePositionForAnchor = (anchor, area, size) => {
 };
 
 const snapWindowToEdgesIfNeeded = async () => {
+  if (isEdgeHidden.value) {
+    return;
+  }
   if (snapInFlight || isRepositioning || resizeInFlight) {
     return;
   }
@@ -918,12 +934,17 @@ const applyDesiredMode = async () => {
   while (true) {
     const nextCompact = desiredCompact;
     const nextSize = nextCompact ? resolveCompactSize() : fullSize.value;
+    const nextMinSize =
+      nextCompact && hideMode.value === "edge"
+        ? new LogicalSize(EDGE_LINE_SIZE.width, EDGE_LINE_SIZE.height)
+        : null;
     if (nextCompact && hideMode.value === "edge") {
       await updateSnapAnchorToEdge();
     } else {
       await updateSnapAnchorFromWindow();
     }
     isCompact.value = nextCompact;
+    await setWindowMinSize(nextMinSize);
     await setWindowSize(nextSize.width, nextSize.height);
     await positionWindowForAnchor(nextSize);
     if (desiredCompact === nextCompact) {
@@ -1874,7 +1895,7 @@ const showTooltip = (event) => {
     return;
   }
   const rect = target.getBoundingClientRect();
-  const position = target.dataset.tooltipPosition ?? "bottom";
+  const position = target.dataset.tooltipPosition ?? "right";
   const next = {
     visible: true,
     text,
