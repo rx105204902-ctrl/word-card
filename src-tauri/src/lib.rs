@@ -240,18 +240,29 @@ pub fn run() {
                     _ => (),
                 })
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.unminimize();
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                    let app = tray.app_handle();
+                    let Some(window) = app.get_webview_window("main") else {
+                        return;
+                    };
+                    let show_window = || {
+                        let _ = window.unminimize();
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    };
+                    match event {
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } => {
+                            show_window();
                         }
+                        TrayIconEvent::Enter { .. } | TrayIconEvent::Move { .. } => {
+                            if window.is_visible().ok() == Some(false) {
+                                show_window();
+                            }
+                        }
+                        _ => {}
                     }
                 })
                 .build(app)?;
