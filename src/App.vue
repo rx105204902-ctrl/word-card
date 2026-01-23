@@ -150,6 +150,11 @@ let desiredCompact = true;
 let resizeInFlight = false;
 
 const BASE_FULL_SIZE = { width: 350, height: 155 };
+const APP_PADDING = 8;
+const BASE_INNER_SIZE = {
+  width: BASE_FULL_SIZE.width - APP_PADDING * 2,
+  height: BASE_FULL_SIZE.height - APP_PADDING * 2,
+};
 const COMPACT_SIZE = { width: 150, height: 50 };
 const EDGE_LINE_SIZE = { width: 10, height: 80 };
 const FULL_WIDTH_MIN = BASE_FULL_SIZE.width;
@@ -200,11 +205,19 @@ const fullSize = computed(() => {
 const fullSizeLabel = computed(
   () => `${fullSize.value.width}px x ${fullSize.value.height}px`
 );
-const uiScale = computed(() =>
-  clamp(fullSize.value.width / BASE_FULL_SIZE.width, 0.5, 2)
-);
+const uiScale = computed(() => {
+  const innerWidth = Math.max(1, fullSize.value.width - APP_PADDING * 2);
+  const innerHeight = Math.max(1, fullSize.value.height - APP_PADDING * 2);
+  const scale = Math.min(
+    innerWidth / BASE_INNER_SIZE.width,
+    innerHeight / BASE_INNER_SIZE.height
+  );
+  return clamp(scale, 0.5, 2);
+});
 const uiScaleStyle = computed(() => ({
   "--ui-scale": uiScale.value,
+  "--ui-base-width": `${BASE_INNER_SIZE.width}px`,
+  "--ui-base-height": `${BASE_INNER_SIZE.height}px`,
 }));
 const dailyStudyCountMap = computed(() => {
   const map = {};
@@ -2816,8 +2829,8 @@ onBeforeUnmount(() => {
 }
 
 .view-main-scale {
-  width: 350px;
-  height: 155px;
+  width: var(--ui-base-width, 334px);
+  height: var(--ui-base-height, 139px);
   transform: scale(var(--ui-scale, 1));
   transform-origin: top left;
 }
