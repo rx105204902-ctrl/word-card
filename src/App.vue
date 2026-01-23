@@ -899,7 +899,7 @@ const resolvePositionForAnchor = (anchor, area, size) => {
 };
 
 const snapWindowToEdgesIfNeeded = async () => {
-  if (isEdgeHidden.value) {
+  if (hideMode.value === "edge") {
     return;
   }
   if (snapInFlight || isRepositioning || resizeInFlight) {
