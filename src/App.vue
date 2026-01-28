@@ -19,14 +19,11 @@ const edgeInsets = ref({ left: 0, right: 0, top: 0, bottom: 0 });
 const edgeInsetFallback = ref(0);
 const fullWidth = ref(350);
 const fullWidthDraft = ref(350);
-const uploadFileInput = ref(null);
-const uploads = ref([]);
-const importNotice = ref("");
-const importBusy = ref(false);
-const importDialogVisible = ref(false);
 const wordListCards = ref([]);
 const wordBankNotice = ref("");
 const wordBankLoading = ref(false);
+const dictionaryDownloadNotice = ref("");
+const dictionaryDownloadStates = ref({});
 const fuzzyWords = ref([]);
 const fuzzyWordsNotice = ref("");
 const fuzzyWordsLoading = ref(false);
@@ -34,11 +31,6 @@ const fuzzyWordSort = ref("marked");
 const fuzzySelectedIds = ref([]);
 const fuzzyWordDetailId = ref(null);
 const fuzzyAudioPlaying = ref(null);
-const wordListMode = ref("existing");
-const selectedWordListId = ref(null);
-const newWordListName = ref("");
-const wordListNotice = ref("");
-const wordListLoading = ref(false);
 const learningNotice = ref("");
 const learningBusy = ref(false);
 const currentWord = ref(null);
@@ -58,11 +50,6 @@ const studyChartHover = ref({
   y: 0,
   value: 0,
 });
-const showUploadHero = computed(() => uploads.value.length === 0);
-const showContinueUpload = computed(() => uploads.value.length > 0);
-const hasCompletedUploads = computed(() =>
-  uploads.value.some((item) => item.status === "completed")
-);
 const selectableWordListCards = computed(() =>
   wordListCards.value.filter((item) => !item.is_system)
 );
@@ -78,6 +65,22 @@ const sortedWordListCards = computed(() => {
   list.sort((a, b) => Number(b.is_active) - Number(a.is_active));
   return list;
 });
+const downloadedDictionaryNames = computed(
+  () => new Set(wordListCards.value.map((item) => item.name))
+);
+const isDictionaryDownloaded = (name) =>
+  downloadedDictionaryNames.value.has(name);
+const getDictionaryState = (id) =>
+  dictionaryDownloadStates.value[id] ?? {
+    status: "idle",
+    progress: 0,
+    error: "",
+    hasTotal: false,
+  };
+const isDictionaryBusy = (id) => {
+  const status = getDictionaryState(id).status;
+  return status === "downloading" || status === "importing";
+};
 const hasCurrentWord = computed(() => Boolean(currentWord.value));
 const proficiencyLevel = computed(() => {
   const score = currentWord.value?.proficiency_score ?? 0;
@@ -152,6 +155,18 @@ const tooltip = ref({
   y: 0,
   position: "bottom",
 });
+const dictionaryDownloads = [
+  {
+    id: "cet4",
+    name: "CET4",
+    url: "https://raw.githubusercontent.com/rx105204902-ctrl/vocabulary-database/refs/heads/main/CET-4.csv",
+  },
+  {
+    id: "cet6",
+    name: "CET6",
+    url: "https://raw.githubusercontent.com/rx105204902-ctrl/vocabulary-database/refs/heads/main/CET-6.csv",
+  },
+];
 let desiredCompact = true;
 let resizeInFlight = false;
 
@@ -174,12 +189,6 @@ const FULL_HEIGHT_RATIO = BASE_FULL_SIZE.height / BASE_FULL_SIZE.width;
 const CURSOR_POLL_INTERVAL_MS = 120;
 const SNAP_THRESHOLD = 16;
 const SNAP_DEBOUNCE_MS = 120;
-const MAX_UPLOAD_COUNT = 3;
-const MAX_UPLOAD_SIZE = 100 * 1024 * 1024;
-const MIN_CHUNK_SIZE = 512 * 1024;
-const MAX_CHUNK_SIZE = 8 * 1024 * 1024;
-const TARGET_CHUNK_COUNT = 20;
-const CHUNK_CONCURRENCY = 3;
 const STUDY_CALENDAR_CACHE_MS = 60 * 1000;
 const STUDY_CALENDAR_WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
 const STUDY_CHART_SIZE = { width: 280, height: 140 };
@@ -199,15 +208,6 @@ let snapDebounceTimer = null;
 let audioPlayer = null;
 let edgeRevealUntil = 0;
 
-const canImport = computed(
-  () => hasCompletedUploads.value && !importBusy.value
-);
-const canConfirmImportDialog = computed(() => {
-  if (wordListMode.value === "existing") {
-    return Boolean(selectedWordListId.value);
-  }
-  return newWordListName.value.trim().length > 0;
-});
 const fullSize = computed(() => {
   const width = Math.round(
     clamp(fullWidth.value, FULL_WIDTH_MIN, FULL_WIDTH_MAX)
@@ -851,22 +851,6 @@ const updateSnapAnchorToEdge = async () => {
   return snapAnchor;
 };
 
-const openUploadPicker = () => {
-  if (!uploadFileInput.value) {
-    return;
-  }
-  uploadFileInput.value.value = "";
-  uploadFileInput.value.click();
-};
-
-const continueUpload = () => {
-  if (uploads.value.length >= MAX_UPLOAD_COUNT) {
-    importNotice.value = "最多支持上传 3 个文件";
-    return;
-  }
-  openUploadPicker();
-};
-
 const resolvePositionForAnchor = (anchor, area, size) => {
   const edgeBounds = anchor.edgeBounds ?? area;
   const { minX, minY, maxX, maxY } = getSnapBounds(area, size);
@@ -1185,23 +1169,17 @@ const openSettings = () => {
 
 const closeSettings = () => {
   isSettings.value = false;
-  if (!importBusy.value) {
-    importDialogVisible.value = false;
-  }
   hideTooltip();
 };
 
 const setSettingsSection = (section) => {
   settingsSection.value = section;
-  if (section !== "import" && !importBusy.value) {
-    importDialogVisible.value = false;
-  }
   if (section !== "fuzzy-words") {
     fuzzyWordDetailId.value = null;
     stopAudioPlayback();
   }
   hideTooltip();
-  if (section === "word-bank") {
+  if (section === "word-bank" || section === "dictionary-download") {
     void refreshWordBank();
   }
   if (section === "fuzzy-words") {
@@ -1211,308 +1189,79 @@ const setSettingsSection = (section) => {
   if (section === "study-calendar") {
     void fetchStudyCalendarCounts();
   }
-};
-
-const formatBytes = (value) => {
-  if (!value && value !== 0) {
-    return "";
-  }
-  const units = ["B", "KB", "MB", "GB"];
-  let size = value;
-  let unitIndex = 0;
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex += 1;
-  }
-  return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
-};
-
-const resolveChunkSize = (size) => {
-  if (!size) {
-    return MIN_CHUNK_SIZE;
-  }
-  const raw = Math.ceil(size / TARGET_CHUNK_COUNT);
-  return Math.min(MAX_CHUNK_SIZE, Math.max(MIN_CHUNK_SIZE, raw));
-};
-
-const bufferToHex = (buffer) =>
-  Array.from(new Uint8Array(buffer))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-
-const bufferToBase64 = (buffer) => {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
-};
-
-const createUploadItem = (file, uploadId) => ({
-  id: uploadId,
-  name: file.name,
-  size: file.size,
-  file,
-  chunkSize: 0,
-  status: "queued",
-  progress: 0,
-  totalChunks: 0,
-  uploadedChunks: 0,
-  message: "",
-  cancelRequested: false,
-});
-
-const resolveUploadStatus = (item) => {
-  switch (item.status) {
-    case "uploading":
-      return "上传中";
-    case "completed":
-      return "已完成";
-    case "canceled":
-      return "已取消";
-    case "error":
-      return "失败";
-    case "queued":
-      return "排队中";
-    default:
-      return "";
+  if (section === "dictionary-download") {
+    dictionaryDownloadNotice.value = "";
   }
 };
 
-const processSelectedFiles = (files) => {
-  const list = Array.from(files ?? []);
-  if (!list.length) {
+const setDictionaryState = (id, patch) => {
+  const current = getDictionaryState(id);
+  dictionaryDownloadStates.value = {
+    ...dictionaryDownloadStates.value,
+    [id]: { ...current, ...patch },
+  };
+};
+
+const downloadDictionary = async (item) => {
+  if (!item?.url || !item?.name) {
     return;
   }
-  const available = MAX_UPLOAD_COUNT - uploads.value.length;
-  if (available <= 0) {
-    importNotice.value = "最多支持上传 3 个文件";
+  if (isDictionaryBusy(item.id)) {
     return;
   }
-  const selected = list.slice(0, available);
-  if (selected.length < list.length) {
-    importNotice.value = "最多支持上传 3 个文件";
-  }
-  selected.forEach((file) => {
-    void startUploadForFile(file);
+  dictionaryDownloadNotice.value = "";
+  setDictionaryState(item.id, {
+    status: "downloading",
+    progress: 0,
+    error: "",
+    hasTotal: false,
   });
-};
-
-const handleUploadFilesChange = async (event) => {
-  processSelectedFiles(event?.target?.files);
-};
-
-
-const validateUploadFile = (file) => {
-  if (!file.name.toLowerCase().endsWith(".csv")) {
-    return "仅支持CSV 文件";
-  }
-  if (file.size > MAX_UPLOAD_SIZE) {
-    return "文件大小超过 100MB";
-  }
-  return "";
-};
-
-const isDuplicateName = (name, excludeId) =>
-  uploads.value.some(
-    (item) => item.name === name && (!excludeId || item.id !== excludeId)
-  );
-
-const resetUploadItem = (item, file, uploadId) => {
-  item.id = uploadId;
-  item.name = file.name;
-  item.size = file.size;
-  item.file = file;
-  item.status = "queued";
-  item.progress = 0;
-  item.chunkSize = 0;
-  item.totalChunks = 0;
-  item.uploadedChunks = 0;
-  item.message = "";
-  item.cancelRequested = false;
-};
-
-const runUpload = async (item, file) => {
-  const chunkSize = resolveChunkSize(file.size);
-  const totalChunks = Math.ceil(file.size / chunkSize);
-  item.chunkSize = chunkSize;
-  item.totalChunks = totalChunks;
-  item.uploadedChunks = 0;
-  item.progress = 0;
-  item.status = "uploading";
-  const uploadId = item.id;
-
   try {
-    await invoke("start_upload", {
-      uploadId,
-      fileName: file.name,
-      size: file.size,
-      chunkSize,
-      totalChunks,
-    });
-    await uploadFileChunks(item, file);
-    if (item.cancelRequested) {
-      return;
+    const response = await fetch(item.url);
+    if (!response.ok) {
+      throw new Error("下载失败");
     }
-    await invoke("finish_upload", { uploadId });
-    item.status = "completed";
-    item.progress = 100;
-    item.message = "";
-    uploads.value = [...uploads.value];
+    const total = Number(response.headers.get("content-length") ?? 0);
+    let received = 0;
+    let csvContent = "";
+    if (response.body) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      setDictionaryState(item.id, { hasTotal: total > 0 });
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        if (value) {
+          received += value.length;
+          csvContent += decoder.decode(value, { stream: true });
+          if (total > 0) {
+            const progress = Math.min(99, Math.round((received / total) * 100));
+            setDictionaryState(item.id, { progress });
+          }
+        }
+      }
+      csvContent += decoder.decode();
+    } else {
+      csvContent = await response.text();
+    }
+    setDictionaryState(item.id, { status: "importing", progress: 100 });
+    await invoke("import_dictionary_csv", {
+      name: item.name,
+      csvContent,
+      overwrite: isDictionaryDownloaded(item.name),
+    });
+    await refreshWordBank();
+    setDictionaryState(item.id, { status: "done", progress: 100 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    item.status = item.cancelRequested ? "canceled" : "error";
-    item.message = item.cancelRequested ? "" : message;
-    if (!item.cancelRequested) {
-      importNotice.value = message;
-    }
-    await invoke("cancel_upload", { uploadId });
-  }
-};
-
-const startUploadForFile = async (file, existingItem) => {
-  const duplicate = isDuplicateName(file.name, existingItem?.id);
-  if (duplicate) {
-    const message = "文件名称重复";
-    importNotice.value = message;
-    if (existingItem) {
-      existingItem.status = "error";
-      existingItem.message = message;
-    }
-    return;
-  }
-
-  const errorMessage = validateUploadFile(file);
-  if (errorMessage) {
-    importNotice.value = errorMessage;
-    if (existingItem) {
-      existingItem.status = "error";
-      existingItem.message = errorMessage;
-      existingItem.file = file;
-    } else {
-      const uploadId = crypto.randomUUID();
-      const item = createUploadItem(file, uploadId);
-      item.status = "error";
-      item.message = errorMessage;
-      uploads.value = [item, ...uploads.value];
-    }
-    return;
-  }
-
-  if (existingItem) {
-    const uploadId = crypto.randomUUID();
-    resetUploadItem(existingItem, file, uploadId);
-    await runUpload(existingItem, file);
-    return;
-  }
-
-  const uploadId = crypto.randomUUID();
-  const item = createUploadItem(file, uploadId);
-  uploads.value = [item, ...uploads.value];
-  await runUpload(item, file);
-};
-
-const uploadFileChunks = async (item, file) => {
-  const totalChunks = item.totalChunks;
-  const chunkSize = item.chunkSize || resolveChunkSize(file.size);
-  let nextIndex = 0;
-  let active = 0;
-
-  const uploadChunk = async (index) => {
-    if (item.cancelRequested) {
-      return;
-    }
-    const start = index * chunkSize;
-    const end = Math.min(file.size, start + chunkSize);
-    const slice = file.slice(start, end);
-    const buffer = await slice.arrayBuffer();
-    const digest = await crypto.subtle.digest("SHA-256", buffer);
-    const chunkHash = bufferToHex(digest);
-    const chunkData = bufferToBase64(buffer);
-    await invoke("upload_chunk", {
-      uploadId: item.id,
-      chunkIndex: index,
-      totalChunks,
-      chunkHash,
-      chunkDataBase64: chunkData,
-    });
-    if (item.cancelRequested) {
-      return;
-    }
-    item.uploadedChunks += 1;
-    item.progress = Math.min(
-      100,
-      Math.round((item.uploadedChunks / totalChunks) * 100)
-    );
-  };
-
-  return new Promise((resolve, reject) => {
-    const launchNext = () => {
-      if (item.cancelRequested) {
-        if (active === 0) {
-          resolve();
-        }
-        return;
-      }
-      while (active < CHUNK_CONCURRENCY && nextIndex < totalChunks) {
-        const index = nextIndex;
-        nextIndex += 1;
-        active += 1;
-        uploadChunk(index)
-          .then(() => {
-            active -= 1;
-            if (nextIndex >= totalChunks && active === 0) {
-              resolve();
-              return;
-            }
-            launchNext();
-          })
-          .catch((error) => {
-            reject(error);
-          });
-      }
-      if (nextIndex >= totalChunks && active === 0) {
-        resolve();
-      }
-    };
-    launchNext();
-  });
-};
-
-const cancelUpload = async (uploadId) => {
-  const item = uploads.value.find((entry) => entry.id === uploadId);
-  if (!item || item.status !== "uploading") {
-    return;
-  }
-  item.cancelRequested = true;
-  item.status = "canceled";
-  item.message = "";
-  item.progress = Math.min(item.progress, 99);
-  await invoke("cancel_upload", { uploadId });
-};
-
-const retryUpload = async (uploadId) => {
-  const item = uploads.value.find((entry) => entry.id === uploadId);
-  if (!item || !item.file) {
-    return;
-  }
-  await startUploadForFile(item.file, item);
-};
-
-const removeUpload = async (uploadId) => {
-  const item = uploads.value.find((entry) => entry.id === uploadId);
-  if (!item) {
-    return;
-  }
-  if (item.status === "uploading") {
-    await cancelUpload(uploadId);
-  }
-  try {
-    await invoke("delete_upload", { uploadId });
+    dictionaryDownloadNotice.value = message;
+    setDictionaryState(item.id, { status: "failed", error: message });
   } finally {
-    uploads.value = uploads.value.filter((entry) => entry.id !== uploadId);
+    if (getDictionaryState(item.id).status === "downloading") {
+      setDictionaryState(item.id, { status: "failed", error: "下载中断" });
+    }
   }
 };
 
@@ -1684,36 +1433,6 @@ const fetchStudyCalendarCounts = async (force = false) => {
     studyCalendarCounts.value = [];
   } finally {
     studyCalendarLoading.value = false;
-  }
-};
-
-const loadWordLists = async () => {
-  wordListLoading.value = true;
-  wordListNotice.value = "";
-  try {
-    wordListCards.value = await requestWordListCards();
-    const selectable = wordListCards.value.filter((item) => !item.is_system);
-    if (!selectable.length) {
-      wordListMode.value = "new";
-      selectedWordListId.value = null;
-      return;
-    }
-    if (
-      !selectedWordListId.value ||
-      !selectable.some((item) => item.id === selectedWordListId.value)
-    ) {
-      selectedWordListId.value = selectable[0].id;
-    }
-    if (wordListMode.value !== "new") {
-      wordListMode.value = "existing";
-    }
-  } catch (error) {
-    wordListNotice.value = error instanceof Error ? error.message : String(error);
-    wordListCards.value = [];
-    selectedWordListId.value = null;
-    wordListMode.value = "new";
-  } finally {
-    wordListLoading.value = false;
   }
 };
 
@@ -1922,73 +1641,6 @@ const markFuzzy = async () => {
     learningNotice.value = error instanceof Error ? error.message : String(error);
   } finally {
     learningBusy.value = false;
-  }
-};
-
-const openImportDialog = async () => {
-  if (!canImport.value) {
-    return;
-  }
-  importDialogVisible.value = true;
-  wordListNotice.value = "";
-  newWordListName.value = "";
-  wordListMode.value = "existing";
-  selectedWordListId.value = null;
-  await loadWordLists();
-};
-
-const closeImportDialog = () => {
-  if (importBusy.value) {
-    return;
-  }
-  importDialogVisible.value = false;
-};
-
-const confirmImport = async () => {
-  if (!canImport.value || !canConfirmImportDialog.value) {
-    return;
-  }
-  importBusy.value = true;
-  importNotice.value = "";
-  wordListNotice.value = "";
-  const targetIds = uploads.value
-    .filter((item) => item.status === "completed")
-    .map((item) => item.id);
-  let wordListId = selectedWordListId.value;
-
-  try {
-    if (wordListMode.value === "new") {
-      const name = newWordListName.value.trim();
-      if (!name) {
-        wordListNotice.value = "请输入词库名称";
-        return;
-      }
-      if (wordListCards.value.some((item) => item.name === name)) {
-        wordListNotice.value = "词库名称已存在";
-        return;
-      }
-      wordListId = await invoke("create_word_list", { name });
-    }
-
-    if (!wordListId) {
-      wordListNotice.value = "请选择词库";
-      return;
-    }
-
-    await invoke("import_uploaded_files", {
-      uploadIds: targetIds,
-      wordListId,
-    });
-    uploads.value = [];
-    importNotice.value = "导入完成";
-    importDialogVisible.value = false;
-    await refreshWordBank();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    wordListNotice.value = message;
-    importNotice.value = message;
-  } finally {
-    importBusy.value = false;
   }
 };
 
@@ -2346,20 +1998,20 @@ onBeforeUnmount(() => {
             </button>
             <button
               class="settings-nav-item icon-button"
-              :class="{ 'is-active': settingsSection === 'import' }"
+              :class="{ 'is-active': settingsSection === 'dictionary-download' }"
               type="button"
-              @click="setSettingsSection('import')"
+              @click="setSettingsSection('dictionary-download')"
               @mousedown.stop
               @mouseenter="showTooltip"
               @mouseleave="hideTooltip"
-              aria-label="导入"
-              data-tooltip="导入"
+              aria-label="词典下载"
+              data-tooltip="词典下载"
               data-tooltip-position="right"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-                <path d="M12 3v12" />
-                <path d="M7 10l5 5 5-5" />
-                <path d="M4 20h16" />
+                <path d="M12 4v10" />
+                <path d="M7 11l5 5 5-5" />
+                <path d="M5 20h14" />
               </svg>
             </button>
 
@@ -2383,14 +2035,6 @@ onBeforeUnmount(() => {
             </button>
           </nav>
           <div class="settings-content">
-            <input
-              ref="uploadFileInput"
-              class="settings-file-input"
-              type="file"
-              accept=".csv,text/csv"
-              multiple
-              @change="handleUploadFilesChange"
-            />
             <div
               v-if="settingsSection === 'word-bank'"
               class="word-bank-panel"
@@ -2744,108 +2388,70 @@ onBeforeUnmount(() => {
                 </template>
               </div>
             </div>
-            <div
-              v-else-if="settingsSection === 'import'"
-              class="import-page"
+                        <div
+              v-else-if="settingsSection === 'dictionary-download'"
+              class="dictionary-download"
             >
-              <div v-if="showUploadHero" class="import-hero">
-                <button
-                  class="upload-hero-button"
-                  type="button"
-                  @click="openUploadPicker"
-                >
-                  上传文件
-                </button>
-                <p class="import-hint">仅支持 0-100MB 的 CSV 文件</p>
-                <p v-if="importNotice" class="import-notice">{{ importNotice }}</p>
+              <div class="dictionary-download-header">
+                <span class="dictionary-download-title">词典下载</span>
               </div>
-              <div v-if="uploads.length" class="upload-list">
-                <div v-for="item in uploads" :key="item.id" class="upload-item">
-                  <div class="upload-meta">
-                    <div class="upload-name">{{ item.name }}</div>
-                    <div class="upload-size">{{ formatBytes(item.size) }}</div>
+              <p class="dictionary-download-desc">
+                当前提供以下词典链接，点击即可下载。
+              </p>
+              <p
+                v-if="dictionaryDownloadNotice"
+                class="dictionary-download-notice"
+              >
+                {{ dictionaryDownloadNotice }}
+              </p>
+              <div class="dictionary-download-list">
+                <div
+                  v-for="item in dictionaryDownloads"
+                  :key="item.id"
+                  class="dictionary-download-item"
+                >
+                  <div class="dictionary-download-meta">
+                    <span class="dictionary-download-name">{{ item.name }}</span>
+                    <span
+                      class="dictionary-download-state"
+                      :class="{ 'is-downloaded': isDictionaryDownloaded(item.name) }"
+                    >
+                      {{ isDictionaryDownloaded(item.name) ? "已下载" : "未下载" }}
+                    </span>
+                    <span
+                      v-if="getDictionaryState(item.id).status === 'failed'"
+                      class="dictionary-download-error"
+                    >
+                      {{ getDictionaryState(item.id).error || "下载失败" }}
+                    </span>
                   </div>
-                  <div class="upload-progress">
-                    <div
-                      class="upload-progress-bar"
-                      :style="{ width: item.progress + '%' }"
-                    ></div>
-                  </div>
-                  <div class="upload-footer">
-                    <div class="upload-status">
-                      {{ resolveUploadStatus(item) }}
-                      <span v-if="item.status === 'uploading'">&middot; {{ item.progress }}%</span>
-                      <span v-if="item.message">&middot; {{ item.message }}</span>
-                    </div>
-                    <div class="upload-actions">
-                      <button
-                        v-if="item.status === 'uploading'"
-                        class="upload-action"
-                        type="button"
-                        @click="cancelUpload(item.id)"
-                        @mouseenter="showTooltip"
-                        @mouseleave="hideTooltip"
-                        data-tooltip="取消"
-                      >
-                        取消
-                      </button>
-                      <template v-else-if="item.status === 'canceled'">
-                        <button
-                          class="upload-action"
-                          type="button"
-                          @click="retryUpload(item.id)"
-                          @mouseenter="showTooltip"
-                          @mouseleave="hideTooltip"
-                          data-tooltip="重新上传"
-                        >
-                          重新上传
-                        </button>
-                        <button
-                          class="upload-action upload-delete"
-                          type="button"
-                          aria-label="删除"
-                          @click="removeUpload(item.id)"
-                          @mouseenter="showTooltip"
-                          @mouseleave="hideTooltip"
-                          data-tooltip="删除"
-                        >
-                          ×
-                        </button>
-                      </template>
-                      <button
-                        v-else
-                        class="upload-action upload-delete"
-                        type="button"
-                        aria-label="删除"
-                        @click="removeUpload(item.id)"
-                        @mouseenter="showTooltip"
-                        @mouseleave="hideTooltip"
-                        data-tooltip="删除"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  </div>
+                  <button
+                    class="dictionary-download-action"
+                    type="button"
+                    :disabled="isDictionaryBusy(item.id)"
+                    @click="downloadDictionary(item)"
+                  >
+                    {{
+                      getDictionaryState(item.id).status === "failed"
+                        ? "重试下载"
+                        : isDictionaryDownloaded(item.name)
+                          ? getDictionaryState(item.id).status === "importing"
+                            ? "导入中..."
+                            : getDictionaryState(item.id).status === "downloading"
+                              ? getDictionaryState(item.id).hasTotal
+                                ? `下载中 ${getDictionaryState(item.id).progress}%`
+                                : "下载中..."
+                              : "重新下载覆盖"
+                          : getDictionaryState(item.id).status === "downloading"
+                            ? getDictionaryState(item.id).hasTotal
+                              ? `下载中 ${getDictionaryState(item.id).progress}%`
+                              : "下载中..."
+                            : getDictionaryState(item.id).status === "importing"
+                              ? "导入中..."
+                              : "下载"
+                    }}
+                  </button>
                 </div>
-              </div>
-              <div class="import-footer">
-                <button
-                  v-if="showContinueUpload"
-                  class="footer-button"
-                  type="button"
-                  @click="continueUpload"
-                >
-                  继续上传
-                </button>
-                <button
-                  v-if="showContinueUpload"
-                  class="footer-button primary"
-                  type="button"
-                  :disabled="!canImport"
-                  @click="openImportDialog"
-                >
-                  {{ importBusy ? "导入中..." : "导入" }}
-                </button>
               </div>
             </div>
             <div v-else-if="settingsSection === 'more'" class="settings-more">
@@ -2891,77 +2497,6 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <p v-else class="settings-placeholder">该模块正在完善中。</p>
-          </div>
-        </div>
-        <div
-          v-if="importDialogVisible"
-          class="import-dialog-backdrop"
-          @click.self="closeImportDialog"
-        >
-          <div class="import-dialog" role="dialog" aria-modal="true">
-            <div class="import-dialog-body">
-              <div class="import-dialog-option">
-                <label class="import-dialog-radio">
-                  <input
-                    v-model="wordListMode"
-                    type="radio"
-                    value="existing"
-                    :disabled="!hasWordLists"
-                  />
-                  <span>选择已有词库</span>
-                </label>
-                <div class="import-dialog-field">
-                  <select
-                    v-model.number="selectedWordListId"
-                    class="import-dialog-select"
-                    :disabled="wordListMode !== 'existing' || !hasWordLists"
-                  >
-                    <option
-                      v-for="list in selectableWordListCards"
-                      :key="list.id"
-                      :value="list.id"
-                    >
-                      {{ list.name }}
-                    </option>
-                  </select>
-                  <p v-if="!hasWordLists" class="import-dialog-hint">暂无可选词库</p>
-                </div>
-              </div>
-              <div class="import-dialog-option">
-                <label class="import-dialog-radio">
-                  <input v-model="wordListMode" type="radio" value="new" />
-                  <span>新建词库</span>
-                </label>
-                <div class="import-dialog-field">
-                  <input
-                    v-model="newWordListName"
-                    class="import-dialog-input"
-                    type="text"
-                    placeholder="输入词库名称"
-                    :disabled="wordListMode !== 'new'"
-                  />
-                </div>
-              </div>
-              <p v-if="wordListLoading" class="import-dialog-hint">
-                正在加载词库...
-              </p>
-              <p v-else-if="wordListNotice" class="import-dialog-notice">
-                {{ wordListNotice }}
-              </p>
-            </div>
-            <div class="import-dialog-actions">
-              <button class="dialog-button" type="button" @click="closeImportDialog">
-                取消
-              </button>
-              <button
-                class="dialog-button primary"
-                type="button"
-                :disabled="!canConfirmImportDialog || importBusy"
-                @click="confirmImport"
-              >
-                {{ importBusy ? "导入中..." : "确认导入" }}
-              </button>
-            </div>
           </div>
         </div>
           <div
@@ -4192,321 +3727,106 @@ onBeforeUnmount(() => {
   gap: 2px;
 }
 
-.import-page {
+.dictionary-download {
   display: grid;
-  grid-template-rows: auto 1fr auto;
   gap: 8px;
+  align-content: start;
   min-height: 100%;
 }
 
-.import-hero {
-  display: grid;
-  justify-items: center;
-  gap: 2px;
-  padding: 8px;
-  min-height: 72px;
-  border-radius: 10px;
-  border: 1px dashed var(--stroke);
-  background: rgba(255, 255, 255, 0.6);
+.dictionary-download-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.upload-hero-button {
-  padding: 6px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--stroke);
-  background: #fff;
+.dictionary-download-title {
   font-size: 0.6rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #1f1d1a;
-  cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  box-shadow: 0 8px 12px -14px var(--shadow);
 }
 
-.upload-hero-button:hover {
+.dictionary-download-desc {
+  margin: 0;
+  font-size: 0.52rem;
+  color: var(--muted);
+}
+
+.dictionary-download-notice {
+  margin: 0;
+  font-size: 0.52rem;
+  color: #9b1c1c;
+}
+
+.dictionary-download-list {
+  display: grid;
+  gap: 6px;
+}
+
+.dictionary-download-item {
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dictionary-download-name {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.dictionary-download-meta {
+  display: grid;
+  gap: 2px;
+}
+
+.dictionary-download-state {
+  font-size: 0.5rem;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dictionary-download-state.is-downloaded {
+  color: #1b9aaa;
+  font-weight: 600;
+}
+
+.dictionary-download-error {
+  font-size: 0.5rem;
+  color: #b42318;
+}
+
+.dictionary-download-action {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.9);
+  font-size: 0.52rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  color: #1f1d1a;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.dictionary-download-action:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 10px 14px -14px var(--shadow);
 }
 
-.import-hint {
-  margin: 0;
-  font-size: 0.52rem;
-  color: var(--muted);
-}
-
-.import-notice {
-  margin: 0;
-  font-size: 0.52rem;
-  color: #9b1c1c;
-}
-
-.upload-list {
-  display: grid;
-  gap: 6px;
-  align-content: start;
-}
-
-.upload-item {
-  padding: 6px;
-  border-radius: 8px;
-  border: 1px solid var(--stroke);
-  background: rgba(255, 255, 255, 0.8);
-  display: grid;
-  gap: 4px;
-}
-
-.upload-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 6px;
-  font-size: 0.54rem;
-  font-weight: 600;
-}
-
-.upload-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 60%;
-}
-
-.upload-size {
-  color: var(--muted);
-  font-weight: 500;
-}
-
-.upload-progress {
-  height: 6px;
-  border-radius: 999px;
-  background: rgba(31, 29, 26, 0.08);
-  overflow: hidden;
-}
-
-.upload-progress-bar {
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #1b9aaa, #56c5b8);
-  transition: width 0.2s ease;
-}
-
-.upload-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.5rem;
-  color: var(--muted);
-}
-
-.upload-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.upload-actions {
-  display: inline-flex;
-  gap: 4px;
-}
-
-.upload-action {
-  padding: 2px 6px;
-  border-radius: 6px;
-  border: 1px solid var(--stroke);
-  background: rgba(255, 255, 255, 0.7);
-  font-size: 0.48rem;
-  letter-spacing: 0.08em;
-  color: #1f1d1a;
-  cursor: pointer;
-}
-
-.upload-delete {
-  color: #b42318;
-  border-color: rgba(180, 35, 24, 0.35);
-  background: rgba(255, 237, 235, 0.8);
-  font-size: 0.7rem;
-  line-height: 1;
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-
-.import-footer {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  padding-top: 6px;
-}
-
-.import-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(20, 18, 15, 0.35);
-  display: grid;
-  place-items: center;
-  z-index: 2000;
-  padding: 12px;
-}
-
-.import-dialog {
-  width: min(260px, 90vw);
-  max-height: min(80vh, 360px);
-  border-radius: 12px;
-  border: 1px solid var(--stroke);
-  background: var(--glass-strong);
-  padding: 10px;
-  display: grid;
-  grid-template-rows: 1fr auto;
-  gap: 8px;
-  box-shadow: 0 14px 24px -18px var(--shadow);
-  overflow: hidden;
-}
-
-.import-dialog-body {
-  display: grid;
-  gap: 10px;
-  font-size: 0.54rem;
-  color: #1f1d1a;
-  overflow-y: auto;
-  padding-right: 2px;
-  scrollbar-width: thin;
-}
-
-.import-dialog-option {
-  display: grid;
-  gap: 4px;
-  padding: 6px;
-  border-radius: 8px;
-  border: 1px solid var(--stroke);
-  background: rgba(255, 255, 255, 0.7);
-}
-
-.import-dialog-radio {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-}
-
-.import-dialog-field {
-  display: grid;
-  gap: 4px;
-}
-
-.import-dialog-select,
-.import-dialog-input {
-  width: 100%;
-  border-radius: 8px;
-  border: 1px solid var(--stroke);
-  padding: 4px 6px;
-  font-size: 0.54rem;
-  background: rgba(255, 255, 255, 0.85);
-  color: #1f1d1a;
-  font-family: inherit;
-}
-
-.import-dialog-input:disabled,
-.import-dialog-select:disabled {
+.dictionary-download-action:disabled {
   opacity: 0.6;
-}
-
-.import-dialog-hint {
-  margin: 0;
-  font-size: 0.5rem;
-  color: var(--muted);
-}
-
-.import-dialog-notice {
-  margin: 0;
-  font-size: 0.5rem;
-  color: #9b1c1c;
-}
-
-.import-dialog-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.dialog-button {
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid var(--stroke);
-  background: rgba(255, 255, 255, 0.85);
-  font-size: 0.52rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  cursor: pointer;
-  color: #1f1d1a;
-  font-family: inherit;
-  text-transform: uppercase;
-}
-
-.dialog-button.primary {
-  background: #1b9aaa;
-  color: #fff;
-  border-color: rgba(0, 0, 0, 0.08);
-}
-
-.dialog-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.footer-button {
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid var(--stroke);
-  background: rgba(255, 255, 255, 0.8);
-  font-size: 0.54rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: pointer;
-  color: #1f1d1a;
-  box-shadow: 0 8px 12px -14px var(--shadow);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.footer-button.primary {
-  background: #1b9aaa;
-  color: #fff;
-  border-color: rgba(0, 0, 0, 0.08);
-}
-
-.footer-button:disabled {
-  opacity: 0.5;
   cursor: not-allowed;
   box-shadow: none;
   transform: none;
 }
-
-.footer-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 14px -14px var(--shadow);
-}
-
-.settings-file-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-.settings-import-button {
-  justify-self: start;
-}
-
 .settings-error {
   color: #9b1c1c;
 }
@@ -4537,9 +3857,7 @@ onBeforeUnmount(() => {
   .back-button,
   .settings-nav-item,
   .icon-button,
-  .upload-hero-button,
-  .upload-progress-bar,
-  .footer-button {
+  .dictionary-download-action {
     transition: none;
   }
 }
@@ -4597,6 +3915,9 @@ body {
   justify-content: stretch;
 }
 </style>
+
+
+
 
 
 

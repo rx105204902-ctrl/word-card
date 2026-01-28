@@ -5271,7 +5271,6 @@ name = "word-card"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "csv",
  "serde",
  "serde_json",

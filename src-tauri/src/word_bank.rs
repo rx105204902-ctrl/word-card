@@ -1,6 +1,5 @@
-use std::collections::HashSet;
+﻿use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -12,28 +11,32 @@ use sqlx::Row;
 use sqlx::SqlitePool;
 use tauri::Manager;
 
-const REQUIRED_HEADERS: [&str; 7] = [
-  "word",
-  "phonetic",
-  "part_of_speech_and_meanings",
-  "example_sentence",
-  "example_translation",
-  "audio_uk",
-  "audio_us",
-];
 const FUZZY_WORD_LIST_NAME: &str = "模糊词词库";
-const DEFAULT_WORD_LIST_NAME: &str = "默认词库";
-const LEGACY_DEFAULT_WORD_LIST_NAME: &str = "四级词库";
-const DEFAULT_WORD_LIST_CSV: &str = include_str!("../file/four_rank.csv");
+const REQUIRED_HEADERS: [&str; 7] = [
+    "word",
+    "phonetic",
+    "part_of_speech_and_meanings",
+    "example_sentence",
+    "example_translation",
+    "audio_uk",
+    "audio_us",
+];
 
 fn is_system_word_list_name(name: &str) -> bool {
     name == FUZZY_WORD_LIST_NAME
-        || name == DEFAULT_WORD_LIST_NAME
-        || name == LEGACY_DEFAULT_WORD_LIST_NAME
+}
+
+#[derive(Debug, Serialize)]
+pub struct WordListCard {
+    pub id: i64,
+    pub name: String,
+    pub word_count: i64,
+    pub is_active: bool,
+    pub is_system: bool,
 }
 
 #[derive(Debug, Deserialize)]
-struct FourRankCsvRecord {
+struct DictionaryCsvRecord {
     word: String,
     phonetic: Option<String>,
     part_of_speech_and_meanings: Option<String>,
@@ -48,15 +51,6 @@ pub struct ImportSummary {
     pub total: u64,
     pub upserted: u64,
     pub skipped: u64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct WordListCard {
-    pub id: i64,
-    pub name: String,
-    pub word_count: i64,
-    pub is_active: bool,
-    pub is_system: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -366,74 +360,6 @@ WHERE study_count IS NOT NULL
     Ok(())
 }
 
-async fn ensure_default_word_list(
-    pool: &SqlitePool,
-    set_active_if_missing: bool,
-) -> Result<i64> {
-    let list_id: Option<i64> = sqlx::query_scalar("SELECT id FROM word_list WHERE name = ?")
-        .bind(DEFAULT_WORD_LIST_NAME)
-        .fetch_optional(pool)
-        .await
-        .context("读取默认词库失败")?;
-    let list_id = match list_id {
-        Some(id) => id,
-        None => {
-            let legacy_id: Option<i64> =
-                sqlx::query_scalar("SELECT id FROM word_list WHERE name = ?")
-                    .bind(LEGACY_DEFAULT_WORD_LIST_NAME)
-                    .fetch_optional(pool)
-                    .await
-                    .context("读取旧默认词库失败")?;
-            if let Some(legacy_id) = legacy_id {
-                sqlx::query("UPDATE word_list SET name = ? WHERE id = ?")
-                    .bind(DEFAULT_WORD_LIST_NAME)
-                    .bind(legacy_id)
-                    .execute(pool)
-                    .await
-                    .context("更新默认词库名称失败")?;
-                legacy_id
-            } else {
-                let result = sqlx::query("INSERT INTO word_list (name) VALUES (?)")
-                    .bind(DEFAULT_WORD_LIST_NAME)
-                    .execute(pool)
-                    .await
-                    .context("创建默认词库失败")?;
-                result.last_insert_rowid()
-            }
-        }
-    };
-
-    let map_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(1) FROM word_list_map WHERE word_list_id = ?")
-            .bind(list_id)
-            .fetch_one(pool)
-            .await
-            .context("读取默认词库单词数量失败")?;
-    if map_count == 0 {
-        import_four_rank_csv_with_pool(pool, DEFAULT_WORD_LIST_CSV, Some(list_id)).await?;
-    }
-
-    if set_active_if_missing {
-        let active: Option<i64> = sqlx::query_scalar(
-            "SELECT active_word_list_id FROM word_list_state WHERE id = 1",
-        )
-        .fetch_optional(pool)
-        .await
-        .context("读取当前词库失败")?;
-        if active.unwrap_or(0) <= 0 {
-            sqlx::query(
-                "UPDATE word_list_state SET active_word_list_id = ?, updated_at = datetime('now') WHERE id = 1",
-            )
-            .bind(list_id)
-            .execute(pool)
-            .await
-            .context("设置默认词库失败")?;
-        }
-    }
-
-    Ok(list_id)
-}
-
 async fn sync_fuzzy_word_list(pool: &SqlitePool) -> Result<()> {
     let fuzzy_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(1) FROM user_word_learning WHERE is_fuzzy = 1",
@@ -539,7 +465,6 @@ pub async fn init_database(app: &tauri::AppHandle) -> Result<()> {
     let pool = open_pool(app).await?;
     ensure_schema(&pool).await?;
     sync_fuzzy_word_list(&pool).await?;
-    ensure_default_word_list(&pool, true).await?;
     Ok(())
 }
 
@@ -547,7 +472,6 @@ pub async fn list_word_lists(app: &tauri::AppHandle) -> Result<Vec<WordListCard>
     let pool = open_pool(app).await?;
     ensure_schema(&pool).await?;
     sync_fuzzy_word_list(&pool).await?;
-    ensure_default_word_list(&pool, false).await?;
 
     let rows = sqlx::query(
         r#"
@@ -684,11 +608,70 @@ pub async fn delete_word_list(app: &tauri::AppHandle, word_list_id: i64) -> Resu
         bail!("系统词库不可删除");
     }
 
+    let orphaned_ids: Vec<i64> = sqlx::query_scalar(
+        r#"
+SELECT wlm.word_id
+FROM word_list_map wlm
+WHERE wlm.word_list_id = ?
+  AND NOT EXISTS (
+    SELECT 1
+    FROM word_list_map other
+    WHERE other.word_id = wlm.word_id
+      AND other.word_list_id != ?
+  )
+"#,
+    )
+    .bind(word_list_id)
+    .bind(word_list_id)
+    .fetch_all(&mut *tx)
+    .await
+    .context("读取孤立单词失败")?;
+
     sqlx::query("DELETE FROM word_list_map WHERE word_list_id = ?")
         .bind(word_list_id)
         .execute(&mut *tx)
         .await
         .context("删除词库关联失败")?;
+
+    if !orphaned_ids.is_empty() {
+        let mut builder = QueryBuilder::new(
+            "DELETE FROM user_word_learning WHERE word_id IN (",
+        );
+        let mut separated = builder.separated(", ");
+        for id in &orphaned_ids {
+            separated.push_bind(id);
+        }
+        builder.push(")");
+        builder
+            .build()
+            .execute(&mut *tx)
+            .await
+            .context("清理学习记录失败")?;
+
+        let mut builder = QueryBuilder::new("DELETE FROM study_log WHERE word_id IN (");
+        let mut separated = builder.separated(", ");
+        for id in &orphaned_ids {
+            separated.push_bind(id);
+        }
+        builder.push(")");
+        builder
+            .build()
+            .execute(&mut *tx)
+            .await
+            .context("清理学习记录日志失败")?;
+
+        let mut builder = QueryBuilder::new("DELETE FROM word WHERE id IN (");
+        let mut separated = builder.separated(", ");
+        for id in &orphaned_ids {
+            separated.push_bind(id);
+        }
+        builder.push(")");
+        builder
+            .build()
+            .execute(&mut *tx)
+            .await
+            .context("清理孤立单词失败")?;
+    }
 
     sqlx::query("DELETE FROM word_list WHERE id = ?")
         .bind(word_list_id)
@@ -708,51 +691,89 @@ pub async fn delete_word_list(app: &tauri::AppHandle, word_list_id: i64) -> Resu
     Ok(())
 }
 
-async fn import_four_rank_csv_with_pool(
-    pool: &SqlitePool,
-    csv_content: &str,
-    word_list_id: Option<i64>,
-) -> Result<ImportSummary> {
-    if let Some(list_id) = word_list_id {
-        let exists: Option<i64> =
-            sqlx::query_scalar("SELECT id FROM word_list WHERE id = ?")
-                .bind(list_id)
-                .fetch_optional(pool)
-                .await
-                .context("检查词库是否存在失败")?;
-        if exists.is_none() {
-            bail!("词库不存在");
+fn normalize_optional(value: Option<String>) -> Option<String> {
+    value.and_then(|item| {
+        let trimmed = item.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
         }
+    })
+}
+
+async fn ensure_word_list_id(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    name: &str,
+) -> Result<i64> {
+    let existing: Option<i64> = sqlx::query_scalar("SELECT id FROM word_list WHERE name = ?")
+        .bind(name)
+        .fetch_optional(&mut **tx)
+        .await
+        .context("检查词库名称失败")?;
+    if let Some(id) = existing {
+        return Ok(id);
+    }
+
+    let result = sqlx::query("INSERT INTO word_list (name) VALUES (?)")
+        .bind(name)
+        .execute(&mut **tx)
+        .await
+        .context("创建词库失败")?;
+    Ok(result.last_insert_rowid())
+}
+
+async fn import_dictionary_csv_with_pool(
+    pool: &SqlitePool,
+    name: &str,
+    csv_content: &str,
+    overwrite: bool,
+) -> Result<ImportSummary> {
+    let trimmed_name = name.trim();
+    if trimmed_name.is_empty() {
+        bail!("词库名称不能为空");
+    }
+    if is_system_word_list_name(trimmed_name) {
+        bail!("系统词库不可导入");
+    }
+
+    let mut tx = pool.begin().await.context("开启数据库事务失败")?;
+    let list_id = ensure_word_list_id(&mut tx, trimmed_name).await?;
+
+    if overwrite {
+        sqlx::query("DELETE FROM word_list_map WHERE word_list_id = ?")
+            .bind(list_id)
+            .execute(&mut *tx)
+            .await
+            .context("清理词库关联失败")?;
     }
 
     let csv_content = csv_content.trim_start_matches('\u{feff}');
     let mut reader = csv::ReaderBuilder::new()
-        .has_headers(true)
         .from_reader(csv_content.as_bytes());
-
     let headers = reader.headers().context("读取 CSV 表头失败")?.clone();
     validate_headers(&headers)?;
 
-    let mut tx = pool.begin().await.context("开启数据库事务失败")?;
-    let mut total = 0u64;
-    let mut upserted = 0u64;
-    let mut skipped = 0u64;
+    let mut total = 0_u64;
+    let mut upserted = 0_u64;
+    let mut skipped = 0_u64;
 
-    for row in reader.deserialize::<FourRankCsvRecord>() {
+    for row in reader.deserialize::<DictionaryCsvRecord>() {
         total += 1;
-        let record = match row {
-            Ok(record) => record,
-            Err(_) => {
-                skipped += 1;
-                continue;
-            }
-        };
-
+        let record = row.context("解析 CSV 行失败")?;
         let word = record.word.trim();
         if word.is_empty() {
             skipped += 1;
             continue;
         }
+
+        let phonetic = normalize_optional(record.phonetic);
+        let meanings = normalize_optional(record.part_of_speech_and_meanings);
+        let example_sentence = normalize_optional(record.example_sentence);
+        let example_translation = normalize_optional(record.example_translation);
+        let audio_uk = normalize_optional(record.audio_uk);
+        let audio_us = normalize_optional(record.audio_us);
+        let word_value = word.to_string();
 
         sqlx::query(
             r#"
@@ -775,37 +796,34 @@ ON CONFLICT(word) DO UPDATE SET
   audio_us = excluded.audio_us
 "#,
         )
-        .bind(word)
-        .bind(record.phonetic)
-        .bind(record.part_of_speech_and_meanings)
-        .bind(record.example_sentence)
-        .bind(record.example_translation)
-        .bind(record.audio_uk)
-        .bind(record.audio_us)
+        .bind(&word_value)
+        .bind(phonetic)
+        .bind(meanings)
+        .bind(example_sentence)
+        .bind(example_translation)
+        .bind(audio_uk)
+        .bind(audio_us)
         .execute(&mut *tx)
         .await
-        .context("Failed to write word table")?;
-        upserted += 1;
+        .context("写入单词失败")?;
 
-        if let Some(list_id) = word_list_id {
-            let word_id: i64 = sqlx::query_scalar("SELECT id FROM word WHERE word = ?")
-                .bind(word)
-                .fetch_one(&mut *tx)
-                .await
-                .context("读取单词 ID 失败")?;
-            sqlx::query(
-                "INSERT OR IGNORE INTO word_list_map (word_list_id, word_id) VALUES (?, ?)",
-            )
+        let word_id: i64 = sqlx::query_scalar("SELECT id FROM word WHERE word = ?")
+            .bind(&word_value)
+            .fetch_one(&mut *tx)
+            .await
+            .context("读取单词 ID 失败")?;
+
+        sqlx::query("INSERT OR IGNORE INTO word_list_map (word_list_id, word_id) VALUES (?, ?)")
             .bind(list_id)
             .bind(word_id)
             .execute(&mut *tx)
             .await
             .context("写入词库关联失败")?;
-        }
+
+        upserted += 1;
     }
 
     tx.commit().await.context("提交数据库事务失败")?;
-
     Ok(ImportSummary {
         total,
         upserted,
@@ -813,31 +831,15 @@ ON CONFLICT(word) DO UPDATE SET
     })
 }
 
-async fn import_four_rank_csv_internal(
+pub async fn import_dictionary_csv(
     app: &tauri::AppHandle,
+    name: &str,
     csv_content: &str,
-    word_list_id: Option<i64>,
+    overwrite: bool,
 ) -> Result<ImportSummary> {
     let pool = open_pool(app).await?;
     ensure_schema(&pool).await?;
-    import_four_rank_csv_with_pool(&pool, csv_content, word_list_id).await
-}
-
-pub async fn import_four_rank_csv(
-    app: &tauri::AppHandle,
-    csv_content: &str,
-) -> Result<ImportSummary> {
-    import_four_rank_csv_internal(app, csv_content, None).await
-}
-
-pub async fn import_four_rank_csv_file_with_list(
-    app: &tauri::AppHandle,
-    file_path: &Path,
-    word_list_id: i64,
-) -> Result<ImportSummary> {
-    let csv_content = fs::read_to_string(file_path)
-        .with_context(|| format!("读取 CSV 文件失败: {}", file_path.display()))?;
-    import_four_rank_csv_internal(app, &csv_content, Some(word_list_id)).await
+    import_dictionary_csv_with_pool(&pool, name, csv_content, overwrite).await
 }
 
 async fn fetch_active_word_list_id(pool: &SqlitePool) -> Result<i64> {
@@ -1462,3 +1464,5 @@ VALUES (?, NULL, NULL, NULL, NULL, NULL, NULL)
         });
     }
 }
+
+
