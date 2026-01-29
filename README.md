@@ -29,18 +29,18 @@ Word Card 是一个基于 Tauri + Vue 3 + TypeScript 的单词卡片学习工具
 ## 源码启动
 1. 安装依赖：
    ```bash
-   npm install
+   pnpm install
    ```
 2. 启动开发模式（Tauri + Vite）：
    ```bash
-   npm run tauri dev
+   pnpm tauri dev
    ```
 
 ## 打包构建
 ```bash
-npm run tauri build
+pnpm tauri build
 ```
 
 ## 启动方式
-- 开发模式启动：执行 `npm run tauri dev`
+- 开发模式启动：执行 `pnpm tauri dev`
 - 生产包启动：在 `src-tauri/target/release/bundle/` 目录中找到对应平台的安装包或可执行文件并运行
